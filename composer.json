@@ -1,0 +1,31 @@
+{
+  "name": "mathsgod/light-oauth2",
+  "description": "OAuth 2.0 integration for the Light framework",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": ">=8.3",
+    "mathsgod/light": "^1.44",
+    "league/oauth2-server": "^9.0",
+    "laminas/laminas-diactoros": "^3.5",
+    "psr/http-message": "^2.0",
+    "lcobucci/jwt": "^5.0",
+    "defuse/php-encryption": "^2.4"
+  },
+  "autoload": {
+    "psr-4": {
+      "Light\\OAuth2\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Light\\OAuth2\\Tests\\": "tests/"
+    }
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^12.0"
+  },
+  "scripts": {
+    "test": "phpunit --no-coverage"
+  }
+}
