@@ -1,0 +1,72 @@
+<?php
+declare(strict_types=1);
+
+namespace Light\OAuth2;
+
+use Light\App;
+use Light\Model\User;
+use Light\OAuth2\Auth\LightPermissionProvider;
+use Light\OAuth2\Contract\AuthorizationFlow;
+use Light\OAuth2\Storage\PdoStore;
+use PDO;
+
+final class ProviderFactory
+{
+    public static function registerFromEnvironment(App $app, ?AuthorizationFlow $flow = null): ?OAuthProvider
+    {
+        if (!filter_var($_ENV['OAUTH_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            return null;
+        }
+
+        $privateKey = self::keyPath('OAUTH_PRIVATE_KEY_PATH');
+        $publicKey = self::keyPath('OAUTH_PUBLIC_KEY_PATH');
+        $config = new Config(
+            issuer: self::required('OAUTH_ISSUER'),
+            resource: self::required('OAUTH_RESOURCE'),
+            privateKey: 'file://' . $privateKey,
+            publicKey: 'file://' . $publicKey,
+            encryptionKey: self::required('OAUTH_ENCRYPTION_KEY'),
+        );
+        $scopes = array_values(array_unique(array_filter(array_map('trim', explode(',', $_ENV['OAUTH_SCOPES'] ?? 'user.list')))));
+        $provider = new OAuthProvider(
+            $config,
+            new PdoStore(self::connection()),
+            new LightPermissionProvider($app, $scopes),
+            $flow ?? new BrowserAuthorizationFlow($app),
+        );
+        $provider->register($app, static function (string $id): ?User {
+            if (!ctype_digit($id)) return null;
+            $user = User::Get((int) $id);
+            return $user && (int) $user->status === 0 ? $user : null;
+        });
+        return $provider;
+    }
+
+    /** Token exchanges must not share the ORM's persistent transaction connection. */
+    public static function connection(): PDO
+    {
+        return new PDO(
+            'mysql:host=' . self::required('DATABASE_HOSTNAME')
+                . ';port=' . ($_ENV['DATABASE_PORT'] ?? '3306')
+                . ';dbname=' . self::required('DATABASE_DATABASE')
+                . ';charset=' . ($_ENV['DATABASE_CHARSET'] ?? 'utf8mb4'),
+            self::required('DATABASE_USERNAME'),
+            $_ENV['DATABASE_PASSWORD'] ?? '',
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_PERSISTENT => false],
+        );
+    }
+
+    private static function required(string $name): string
+    {
+        $value = $_ENV[$name] ?? '';
+        if (!is_string($value) || $value === '') throw new \RuntimeException("Missing {$name} configuration");
+        return $value;
+    }
+
+    private static function keyPath(string $name): string
+    {
+        $path = realpath(self::required($name));
+        if ($path === false || !is_readable($path)) throw new \RuntimeException("{$name} must point to a readable key file");
+        return $path;
+    }
+}

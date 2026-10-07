@@ -90,6 +90,23 @@ final class OAuthProvider
     public function register(\Light\App $app, callable $loadUser): void
     {
         if (!method_exists($app, 'getRouter') || !method_exists($app, 'setAuthServiceFactory')) throw new \LogicException('Light OAuth extension points required; see patches/light-extension-points.patch');
+        if ($this->store instanceof Contract\ClientStore) {
+            if (!interface_exists(\Light\GraphQL\ExplicitController::class)) {
+                throw new \LogicException('OAuth client management requires Light explicit controller registration support');
+            }
+            $manager = new Management\ClientManager($this->store, $this->permissions);
+            $app->getContainer()->add(\Light\OAuth2\Controller\OAuthClientController::class, new \Light\OAuth2\Controller\OAuthClientController($manager));
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Controller');
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Input');
+            if (method_exists($app, 'addPermissions')) {
+                $app->addPermissions(['oauth_client.list', 'oauth_client.add', 'oauth_client.update', 'oauth_client.delete']);
+            }
+            $app->addMenus([[
+                'label' => 'OAuth Clients', 'to' => '/OAuthClient',
+                'icon' => 'sym_o_key', 'permission' => 'oauth_client.list',
+            ]]);
+        }
         $router = $app->getRouter();
         $issuerPath = rtrim(parse_url($this->config->issuer, PHP_URL_PATH) ?? '', '/');
         $routePrefix = $issuerPath . $this->config->routePrefix;

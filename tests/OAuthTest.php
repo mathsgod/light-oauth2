@@ -161,17 +161,42 @@ final class OAuthTest extends TestCase
         self::assertSame(400, $this->exchange($params)->getStatusCode());
     }
 
+    public function testDeletingClientPermanentlyInvalidatesItsTokens(): void
+    {
+        $tokens = $this->tokens();
+        $client = $this->store->client('codex');
+        self::assertTrue($this->store->deleteClient('codex'));
+        foreach ($this->store->records as $records) {
+            foreach ($records as $record) self::assertTrue($record['revoked']);
+        }
+        // Reusing the ID cannot bring a deleted client's old credentials back.
+        $this->store->createClient($client);
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $tokens['refresh_token']])->getStatusCode());
+        $this->expectException(OAuthServerException::class);
+        $this->provider->validator()->validate($this->request($tokens['access_token']));
+    }
+
     public function testProviderRegistersRoutesAndAuthenticatesThroughLightFactory(): void
     {
         if (!method_exists(\Light\App::class, 'setAuthServiceFactory')) self::markTestSkipped('Set LIGHT_SOURCE_PATH to patched Light checkout');
+        if (!interface_exists(\Light\GraphQL\ExplicitController::class)) self::markTestSkipped('Set LIGHT_SOURCE_PATH to Light with explicit controller registration');
         $app = (new \ReflectionClass(\Light\App::class))->newInstanceWithoutConstructor();
         $router = new \League\Route\Router();
         $server = $this->createStub(\Light\Server::class);
         $server->method('getRouter')->willReturn($router);
         (new \ReflectionProperty(\Light\App::class, 'server'))->setValue($app, $server);
         (new \ReflectionProperty(\Light\App::class, 'cache'))->setValue($app, new \Symfony\Component\Cache\Psr16Cache(new \Symfony\Component\Cache\Adapter\ArrayAdapter()));
+        $container = new \League\Container\Container();
+        (new \ReflectionProperty(\Light\App::class, 'container'))->setValue($app, $container);
+        $factory = new \TheCodingMachine\GraphQLite\SchemaFactory($app->getCache(), $container);
+        $factory->setFinder(\Light\GraphQL\ControllerDiscovery::finder($container));
+        (new \ReflectionProperty(\Light\App::class, 'factory'))->setValue($app, $factory);
         $user = (new \ReflectionClass(\Light\Model\User::class))->newInstanceWithoutConstructor();
         $this->provider->register($app, fn() => $user);
+        self::assertTrue($container->has(\Light\OAuth2\Controller\OAuthClientController::class));
+        if (method_exists($app, 'addPermissions')) {
+            self::assertSame(['oauth_client.list', 'oauth_client.add', 'oauth_client.update', 'oauth_client.delete'], (new \ReflectionProperty(\Light\App::class, 'extensionPermissions'))->getValue($app));
+        }
         $request = (new ServerRequest())->withMethod('GET')->withUri(new \Laminas\Diactoros\Uri('https://auth.example.com/.well-known/oauth-authorization-server'));
         self::assertSame(200, $router->dispatch($request)->getStatusCode());
         $request = $request->withMethod('POST')->withUri(new \Laminas\Diactoros\Uri('https://auth.example.com/oauth/token'))->withParsedBody(['grant_type' => 'bad']);

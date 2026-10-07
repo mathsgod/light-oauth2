@@ -1,10 +1,9 @@
 <?php
 declare(strict_types=1);
 namespace Light\OAuth2\Storage;
-use Light\OAuth2\Contract\Store;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
 use PDO;
-final class PdoStore implements Store
+final class PdoStore implements \Light\OAuth2\Contract\ClientStore
 {
     public function __construct(private PDO $pdo)
     {
@@ -12,9 +11,26 @@ final class PdoStore implements Store
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
     }
+    public function clients(): array
+    {
+        $rows = $this->pdo->query('SELECT record FROM oauth_clients ORDER BY id')->fetchAll(PDO::FETCH_COLUMN);
+        return array_map(fn(string $record): array => json_decode($record, true, 512, JSON_THROW_ON_ERROR), $rows);
+    }
+    public function createClient(array $client): void
+    {
+        ClientRegistration::validate($client);
+        try {
+            $statement = $this->pdo->prepare('INSERT INTO oauth_clients (id, record) VALUES (?, ?)');
+            $statement->execute([$client['id'], json_encode($client, JSON_THROW_ON_ERROR)]);
+        } catch (\PDOException $error) {
+            if (($error->errorInfo[1] ?? null) === 1062) throw new \InvalidArgumentException('Client ID already exists');
+            throw $error;
+        }
+    }
     public function client(string $id): ?array
     {
-        $statement = $this->pdo->prepare('SELECT record FROM oauth_clients WHERE id = ?');
+        $lock = $this->pdo->inTransaction() ? ' FOR UPDATE' : '';
+        $statement = $this->pdo->prepare('SELECT record FROM oauth_clients WHERE id = ?' . $lock);
         $statement->execute([$id]);
         $value = $statement->fetchColumn();
         return $value === false ? null : json_decode($value, true, 512, JSON_THROW_ON_ERROR);
@@ -24,6 +40,22 @@ final class PdoStore implements Store
         ClientRegistration::validate($client);
         $statement = $this->pdo->prepare('INSERT INTO oauth_clients (id, record) VALUES (?, ?) ON DUPLICATE KEY UPDATE record = VALUES(record)');
         $statement->execute([$client['id'], json_encode($client, JSON_THROW_ON_ERROR)]);
+    }
+    public function deleteClient(string $id): bool
+    {
+        return $this->transaction(function () use ($id): bool {
+            if ($this->client($id) === null) return false;
+            // Refresh records reference access-token IDs rather than client IDs.
+            $access = $this->pdo->prepare("SELECT id FROM oauth_credentials WHERE type = 'access_token' AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.client_id')) = ? FOR UPDATE");
+            $access->execute([$id]);
+            $refresh = $this->pdo->prepare("UPDATE oauth_credentials SET revoked = 1 WHERE type = 'refresh_token' AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.access_token_id')) = ?");
+            foreach ($access->fetchAll(PDO::FETCH_COLUMN) as $tokenId) $refresh->execute([$tokenId]);
+            $credentials = $this->pdo->prepare("UPDATE oauth_credentials SET revoked = 1 WHERE JSON_UNQUOTE(JSON_EXTRACT(record, '$.client_id')) = ?");
+            $credentials->execute([$id]);
+            $client = $this->pdo->prepare('DELETE FROM oauth_clients WHERE id = ?');
+            $client->execute([$id]);
+            return true;
+        });
     }
     public function insert(string $type, string $id, array $record): void
     {

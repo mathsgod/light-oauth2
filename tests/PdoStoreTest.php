@@ -20,6 +20,13 @@ final class PdoStoreTest extends TestCase
         $client = ['id' => 'test', 'name' => 'Test', 'redirect_uris' => ['https://example.com/callback'], 'confidential' => false, 'enabled' => true, 'scopes' => ['client.list']];
         $store->saveClient($client);
         self::assertSame($client, $store->client('test'));
+        self::assertSame([$client], $store->clients());
+        try {
+            $store->createClient($client);
+            self::fail('Duplicate OAuth client accepted');
+        } catch (\InvalidArgumentException) {
+            self::assertSame($client, $store->client('test'));
+        }
         $client['enabled'] = false; $store->saveClient($client);
         self::assertFalse($store->client('test')['enabled']);
         $record = ['expires_at' => time() + 60, 'revoked' => false];
@@ -31,6 +38,20 @@ final class PdoStoreTest extends TestCase
         self::assertFalse($store->record('auth_code', 'one')['revoked']);
         $store->transaction(function () use ($store) { self::assertFalse($store->record('auth_code', 'one')['revoked']); $store->revoke('auth_code', 'one'); });
         self::assertTrue($store->record('auth_code', 'one')['revoked']);
+        $credential = ['expires_at' => time() + 60, 'revoked' => false, 'client_id' => 'test'];
+        $store->insert('auth_code', 'owned-code', $credential);
+        $store->insert('access_token', 'owned-access', $credential);
+        $store->insert('refresh_token', 'owned-refresh', ['expires_at' => time() + 60, 'access_token_id' => 'owned-access']);
+        $store->insert('access_token', 'other-access', [...$credential, 'client_id' => 'other']);
+        $store->insert('refresh_token', 'other-refresh', ['expires_at' => time() + 60, 'access_token_id' => 'other-access']);
+        self::assertTrue($store->deleteClient('test'));
+        self::assertNull($store->client('test'));
+        self::assertFalse($store->deleteClient('test'));
+        foreach (['auth_code' => 'owned-code', 'access_token' => 'owned-access', 'refresh_token' => 'owned-refresh'] as $type => $id) self::assertTrue($store->record($type, $id)['revoked']);
+        self::assertFalse($store->record('access_token', 'other-access')['revoked']);
+        self::assertFalse($store->record('refresh_token', 'other-refresh')['revoked']);
+        $store->createClient($client);
+        self::assertTrue($store->record('refresh_token', 'owned-refresh')['revoked']);
         $this->expectException(UniqueTokenIdentifierConstraintViolationException::class);
         $store->insert('auth_code', 'one', $record);
     }

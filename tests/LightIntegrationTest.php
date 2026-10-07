@@ -10,6 +10,19 @@ use Psr\Http\Server\RequestHandlerInterface;
 use Psr\Http\Message\{ServerRequestInterface, ResponseInterface};
 final class LightIntegrationTest extends TestCase
 {
+    public function testExtensionPermissionsAreDiscoverableWithoutGrantingAccess(): void
+    {
+        if (!method_exists(App::class, 'addPermissions')) self::markTestSkipped('Set LIGHT_SOURCE_PATH to Light with addPermissions');
+        $app = (new \ReflectionClass(App::class))->newInstanceWithoutConstructor();
+        $rbac = new \Light\Rbac\Rbac();
+        (new \ReflectionProperty(App::class, 'rbac'))->setValue($app, $rbac);
+        $app->addPermissions(['oauth_client.list', 'oauth_client.add', 'oauth_client.update']);
+        $permissions = $app->getPermissions();
+        self::assertContains('oauth_client.list', $permissions);
+        self::assertContains('oauth_client.add', $permissions);
+        self::assertContains('oauth_client.update', $permissions);
+        self::assertSame([], $rbac->getPermissions());
+    }
     public function testOAuthServiceUsesUserAndTokenScope(): void
     {
         $app = (new \ReflectionClass(App::class))->newInstanceWithoutConstructor();

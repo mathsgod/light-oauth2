@@ -11,7 +11,7 @@ OAuth 2.0 Authorization Code + S256 PKCE integration for Light, powered by Leagu
 - Authorization-server and protected-resource metadata responses.
 - Resource-specific JWT audience, issuer validation, expiry/signature/revocation validation.
 - Light authentication adapter and permission scopes. Effective rights require token scope, client-allowed scope, OAuth-exposed scope and the user's current permission.
-- Application-defined login, second factor and consent via `AuthorizationFlow`.
+- Default Light login/2FA and consent pages, with customizable `AuthorizationFlow`.
 
 This package does not supply a login/2FA UI, dynamic client registration, CIMD, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider serves one configured resource; it does not implement token exchange between resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow. Refresh tokens rotate, but replay does not currently revoke a whole token family.
 
@@ -67,6 +67,64 @@ Use `$provider->validator()->validate($request)` to obtain a `TokenContext`; use
 
 An MCP service must host its own protected-resource metadata and return the appropriate `WWW-Authenticate` resource metadata challenge. This PHP package does not update the Node MCP server. Codex can use the pre-registered client ID; use the exact callback URL shown by your Codex version. Loopback ports are matched exactly in this release; configure a fixed Codex callback port and register that URI. No wildcard redirect URIs are accepted.
 
+## Application bootstrap and authorization page
+
+Both `Light\OAuth2\ProviderFactory` and `Light\OAuth2\BrowserAuthorizationFlow`
+are provided by this package. The application's entry point only needs to call
+the factory before `run()`:
+
+```php
+$app = new \Light\App();
+\Light\OAuth2\ProviderFactory::registerFromEnvironment($app);
+$app->run();
+```
+
+The factory is enabled by `OAUTH_ENABLED=true`. It reads `OAUTH_ISSUER`,
+`OAUTH_RESOURCE`, `OAUTH_PRIVATE_KEY_PATH`, `OAUTH_PUBLIC_KEY_PATH`,
+`OAUTH_ENCRYPTION_KEY` and comma-separated `OAUTH_SCOPES`, and uses the Light
+`DATABASE_*` settings with a dedicated PDO connection. The default browser flow
+reuses Light password and required 2FA checks, with explicit consent, one-time
+CSRF protection and CSP allowing the validated callback origin.
+
+An application may supply its own `AuthorizationFlow` as the optional second
+argument to `registerFromEnvironment($app, $flow)` to customize the login and
+consent pages. The default page implementation lives entirely in this package.
+
+## OAuth client management
+
+When `OAuthProvider::register()` is used with `PdoStore` (or another `ClientStore`),
+it registers the client management GraphQL API and adds an **OAuth Clients** menu
+entry at `/OAuthClient` for `nuxt-light`. Update both packages to use this page.
+No additional database migration is needed beyond `migrations/001_oauth.sql`.
+Use a Light checkout with `Light\GraphQL\ExplicitController` and
+`ControllerDiscovery` support. The management controller uses
+`Light\OAuth2\Controller`; it is discovered only after the provider explicitly
+registers it in the container, so installing the package alone does not activate
+management queries or require a client store during schema generation.
+
+- Queries: `oauthClients`, `oauthClientScopes` (`oauth_client.list`).
+- Mutations: `createOAuthClient(input)` (`oauth_client.add`),
+  `updateOAuthClient(input)` and `resetOAuthClientSecret(id)` (`oauth_client.update`).
+  `deleteOAuthClient(id)` requires `oauth_client.delete` and removes the client,
+  permanently revoking its authorization codes, access tokens and linked refresh
+  tokens in one transaction. Recreating the ID does not restore those credentials.
+- Input fields: `id`, `name`, `redirectUris`, `scopes`, `confidential`, `enabled`.
+  The ID cannot be changed on edit. Scopes must be exposed by the provider.
+- Create/update return `{ client, secret }`. A new confidential client, or a
+  public client converted to confidential, receives a secret shown once.
+  Reset returns a new secret and invalidates the previous secret. Only hashes
+  are stored; lists never expose secrets or hashes.
+- Disabling a client prevents OAuth token use and exchange while disabled.
+  Re-enabling restores access to credentials that remain valid; disabling does
+  not permanently revoke them. Secret reset does not revoke access tokens.
+
+Grant these permissions through Light RBAC for delegated administrators.
+Light's `addPermissions()` extension hook makes these rights discoverable in
+the permissions page; upgrade the local Light checkout to include this hook.
+The existing `Administrators` wildcard already grants access. Stores that only
+implement `Store` continue to work without the management API.
+Clear Light's schema cache when upgrading an existing deployment.
+
 ## Tests
 
 ```bash
@@ -79,4 +137,4 @@ OAUTH_TEST_USER=... OAUTH_TEST_PASSWORD=... \
 LIGHT_SOURCE_PATH=/path/to/light composer test
 ```
 
-The MySQL test creates connection-local temporary tables; it does not modify application tables. Tests cover PKCE, code replay, refresh rotation/scope escalation, revocation, client binding, resource audience, dynamic permission checks, incomplete 2FA, denied consent, metadata, Light integration and storage rollback. Separate multi-connection concurrency/load testing has not been run.
+The MySQL test creates connection-local temporary tables; it does not modify application tables. Optional application bootstrap and browser-flow tests use the Light checkout's `.env` and database when `LIGHT_SOURCE_PATH` is set, rolling back ORM transactions and removing temporary clients. They cover the default pages, consent CSRF/session binding, callback CSP and custom authorization flows. Tests also cover PKCE, code replay, refresh rotation/scope escalation, revocation, client binding, resource audience, dynamic permission checks, incomplete 2FA, denied consent, metadata, Light integration and storage rollback. Separate multi-connection concurrency/load testing has not been run.
