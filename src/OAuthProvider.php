@@ -89,7 +89,7 @@ final class OAuthProvider
     /** Requires Light's new getRouter() and setAuthServiceFactory() extension points. */
     public function register(\Light\App $app, callable $loadUser): void
     {
-        if (!method_exists($app, 'getRouter') || !method_exists($app, 'setAuthServiceFactory')) throw new \LogicException('Light OAuth extension points required; see patches/light-extension-points.patch');
+        if (!method_exists($app, 'getRouter') || !method_exists($app, 'setAuthServiceFactory')) throw new \LogicException('Use a Light version with OAuth extension points: getRouter(), setAuthServiceFactory() and createAuthService()');
         if ($this->store instanceof Contract\ClientStore) {
             if (!interface_exists(\Light\GraphQL\ExplicitController::class)) {
                 throw new \LogicException('OAuth client management requires Light explicit controller registration support');

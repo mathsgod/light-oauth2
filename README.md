@@ -17,7 +17,7 @@ This package does not supply a login/2FA UI, dynamic client registration, CIMD, 
 
 ## Light integration
 
-Light needs `App::getRouter()`, `App::setAuthServiceFactory()` and `App::createAuthService()`. These changes have been made in the local `/home/maths/light/light` checkout. A portable patch is supplied in `patches/light-extension-points.patch`. The released Light dependency may not contain them yet; `register()` checks and fails explicitly if they are missing. Do not edit vendor files: use the patched Light checkout as a Composer path repository or publish a Light release containing the hooks.
+Light needs `App::getRouter()`, `App::setAuthServiceFactory()` and `App::createAuthService()`. Use a Light version containing these extension points; `register()` checks and fails explicitly if they are missing. During local development, use the sibling `../light` checkout as a Composer path repository.
 
 The application calls `$provider->register($app, $loadActiveUser)` before `$app->run()`. See `examples/register.php`. The factory retains existing Light authentication for native tokens and uses League validation for stored OAuth credentials. Both GraphQL and the built-in filesystem routes use the patched Light auth factory. OAuth tokens use separate keys/issuer from native Light credentials. OAuth users retain `#[Right('client.list')]` checks through the scope-aware adapter.
 
