@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "87cd14c03a9352827245816735acc0d2",
+    "content-hash": "cb73def625fae6e0f4495f5a505d7d20",
     "packages": [
         {
             "name": "bacon/bacon-qr-code",
@@ -2727,16 +2727,16 @@
         },
         {
             "name": "mathsgod/light",
-            "version": "v1.45.0",
+            "version": "v1.46.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/mathsgod/light.git",
-                "reference": "0b89c2695323be8d47a24ff02790550438d40d0e"
+                "reference": "bc73eca0c4a07771a771eb6bbc5d188d082f5925"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/mathsgod/light/zipball/0b89c2695323be8d47a24ff02790550438d40d0e",
-                "reference": "0b89c2695323be8d47a24ff02790550438d40d0e",
+                "url": "https://api.github.com/repos/mathsgod/light/zipball/bc73eca0c4a07771a771eb6bbc5d188d082f5925",
+                "reference": "bc73eca0c4a07771a771eb6bbc5d188d082f5925",
                 "shasum": ""
             },
             "require": {
@@ -2776,6 +2776,7 @@
                 "hostlink/hostlink-storage-adapter": "^1.0",
                 "laminas/laminas-httphandlerrunner": "*",
                 "league/flysystem-aws-s3-v3": "^3.24",
+                "mathsgod/light-oauth2": "dev-main",
                 "phpstan/phpstan": "^2.0",
                 "phpunit/phpunit": "^12.0"
             },
@@ -2804,9 +2805,9 @@
             "description": "A lightweight PHP GraphQL framework",
             "support": {
                 "issues": "https://github.com/mathsgod/light/issues",
-                "source": "https://github.com/mathsgod/light/tree/v1.45.0"
+                "source": "https://github.com/mathsgod/light/tree/v1.46.0"
             },
-            "time": "2026-10-06T04:41:03+00:00"
+            "time": "2026-10-07T05:29:11+00:00"
         },
         {
             "name": "mathsgod/light-db",

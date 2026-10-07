@@ -1,6 +1,6 @@
 <?php
 $loader = require dirname(__DIR__) . '/vendor/autoload.php';
-// Optional local checkout for testing the unreleased Light extension points.
+// Optional local checkout for testing application/bootstrap integration.
 if ($path = getenv('LIGHT_SOURCE_PATH')) {
     $loader->addClassMap(['Light\\App' => rtrim($path, '/') . '/src/App.php']);
     $loader->addClassMap([

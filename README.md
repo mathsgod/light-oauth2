@@ -40,7 +40,7 @@ token can still be presented unexpired, and retain refresh-to-access links neede
 
 ## Light integration
 
-Light needs `App::getRouter()`, `App::setAuthServiceFactory()` and `App::createAuthService()`. Use a Light version containing these extension points; `register()` checks and fails explicitly if they are missing. During local development, use the sibling `../light` checkout as a Composer path repository.
+Light 1.46+ is required. It provides `App::getRouter()`, `App::setAuthServiceFactory()`, `App::createAuthService()` and explicit GraphQL controller registration. During local development, use the sibling `../light` checkout as a Composer path repository.
 
 The application calls `$provider->register($app, $loadActiveUser)` before `$app->run()`. See `examples/register.php`. The factory retains existing Light authentication for native tokens and uses League validation for stored OAuth credentials. Both GraphQL and the built-in filesystem routes use the patched Light auth factory. OAuth tokens use separate keys/issuer from native Light credentials. OAuth users retain `#[Right('client.list')]` checks through the scope-aware adapter.
 
@@ -164,7 +164,7 @@ The response contains no token values or client secrets. No administrator permis
 
 ```bash
 composer test
-# Include unreleased Light extension integration:
+# Include local Light application/bootstrap integration:
 LIGHT_SOURCE_PATH=/path/to/light composer test
 # Include MySQL storage checks:
 OAUTH_TEST_DSN='mysql:host=127.0.0.1;dbname=test' \
