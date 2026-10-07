@@ -12,6 +12,6 @@ final class LightPermissionProvider implements PermissionProvider
         if (!ctype_digit($userId) || !in_array($permission, $this->delegatablePermissions, true)) return false;
         $user = \Light\Model\User::Get((int) $userId);
         if (!$user || (int) $user->status !== 0) return false;
-        return $this->app->getRbac()->getUser((int) $userId)?->can($permission) ?? false;
+        return $this->app->getRbac()->getUser($userId)?->can($permission) ?? false;
     }
 }
