@@ -16,11 +16,13 @@ final class OAuthProvider
     private ScopeRepository $scopes;
     private RevocationEndpoint $revocation;
     private TokenValidator $validator;
+    private RefreshTokenRepository $refresh;
     public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow)
     {
         $this->scopes = new ScopeRepository($permissions);
         $this->server = new AuthorizationServer(new ClientRepository($store), new AccessTokenRepository($store, $config), $this->scopes, $config->privateKey, $config->encryptionKey);
-        $refresh = new RefreshTokenRepository($store);
+        if (!$store instanceof Contract\RefreshTokenStore) throw new \LogicException('OAuth stores must implement RefreshTokenStore for refresh replay protection');
+        $refresh = $this->refresh = new RefreshTokenRepository($store);
         $grant = new AuthCodeGrant(new AuthCodeRepository($store), $refresh, new \DateInterval($config->codeTtl));
         $grant->setRefreshTokenTTL(new \DateInterval($config->refreshTokenTtl));
         $this->server->enableGrantType($grant, new \DateInterval($config->accessTokenTtl));
@@ -56,9 +58,17 @@ final class OAuthProvider
             $params = $request->getParsedBody();
             if (!is_array($params)) throw OAuthServerException::invalidRequest('grant_type');
             $this->validateResource($params);
-            $response = $this->store->transaction(fn() => $this->server->respondToAccessTokenRequest($request, new \Laminas\Diactoros\Response()));
+            $this->refresh->reset();
+            $response = $this->store->transaction(function () use ($request) {
+                try { return $this->server->respondToAccessTokenRequest($request, new \Laminas\Diactoros\Response()); }
+                catch (Exception\RefreshTokenReuse $reuse) { return $reuse; }
+            });
+            // Returning the signal commits family revocation; ordinary failures
+            // still throw inside the transaction and roll back token consumption.
+            if ($response instanceof Exception\RefreshTokenReuse) throw OAuthServerException::invalidRefreshToken('Refresh token reuse detected');
             return $this->noStore($response);
         } catch (OAuthServerException $error) { return $this->noStore($error->generateHttpResponse(new \Laminas\Diactoros\Response())); }
+        finally { $this->refresh->reset(); }
     }
     private function validateResource(array $params): void
     {

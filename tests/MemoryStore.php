@@ -3,7 +3,7 @@ declare(strict_types=1);
 namespace Light\OAuth2\Tests;
 use Light\OAuth2\Storage\ClientRegistration;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
-final class MemoryStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore
+final class MemoryStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore, \Light\OAuth2\Contract\RefreshTokenStore
 {
     public array $clients = [];
     public array $records = [];
@@ -70,6 +70,20 @@ final class MemoryStore implements \Light\OAuth2\Contract\ClientStore, \Light\OA
         return $found;
     }
     public function revoke(string $type, string $id): void { if (isset($this->records[$type][$id])) $this->records[$type][$id]['revoked'] = true; }
+    public function consumeRefreshToken(string $id, string $familyId): void
+    {
+        $this->records['refresh_token'][$id]['family_id'] = $familyId;
+        $this->records['refresh_token'][$id]['used_at'] = time();
+        $this->revoke('refresh_token', $id);
+    }
+    public function revokeRefreshTokenFamily(string $familyId): void
+    {
+        foreach ($this->records['refresh_token'] ?? [] as $id => $record) {
+            if (($record['family_id'] ?? null) !== $familyId) continue;
+            $this->revoke('refresh_token', $id);
+            $this->revoke('access_token', $record['access_token_id']);
+        }
+    }
     public function transaction(callable $operation): mixed
     {
         $snapshot = $this->records;

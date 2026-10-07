@@ -97,9 +97,10 @@ final class OAuthTest extends TestCase
         $params = ['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $tokens['refresh_token']];
         $response = $this->exchange($params);
         self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
-        self::assertSame(400, $this->exchange($params)->getStatusCode());
         $new = json_decode((string) $response->getBody(), true);
         self::assertSame('27', $this->provider->validator()->validate($this->request($new['access_token']))->userId);
+        self::assertSame(400, $this->exchange($params)->getStatusCode());
+        self::assertSame(400, $this->exchange([...$params, 'refresh_token' => $new['refresh_token']])->getStatusCode());
         $this->expectException(OAuthServerException::class);
         $this->provider->validator()->validate($this->request($tokens['access_token']));
     }
@@ -110,6 +111,185 @@ final class OAuthTest extends TestCase
         self::assertSame(400, $this->exchange($params)->getStatusCode());
         unset($params['scope']); $this->permissions->allowed = false;
         self::assertSame(400, $this->exchange($params)->getStatusCode());
+    }
+    private function refresh(array $tokens): array
+    {
+        $response = $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $tokens['refresh_token']]);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        return json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+    }
+    public function testReplayRevokesDescendantsButNotIndependentAuthorization(): void
+    {
+        $a = $this->tokens();
+        $b = $this->refresh($a);
+        $c = $this->refresh($b);
+        $independent = $this->tokens();
+        $response = $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $a['refresh_token']]);
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame('invalid_grant', json_decode((string) $response->getBody(), true)['error']);
+        self::assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+        foreach ([$a, $b, $c] as $tokens) {
+            try { $this->provider->validator()->validate($this->request($tokens['access_token'])); self::fail('Family access token survived replay'); }
+            catch (OAuthServerException) {}
+        }
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $c['refresh_token']])->getStatusCode());
+        self::assertSame('27', $this->provider->validator()->validate($this->request($independent['access_token']))->userId);
+        $this->refresh($independent);
+    }
+    public function testInvalidOrExpiredRefreshDoesNotRevokeFamily(): void
+    {
+        $a = $this->tokens();
+        $b = $this->refresh($a);
+        $other = $this->store->client('codex'); $other['id'] = 'other'; $this->store->saveClient($other);
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'other', 'refresh_token' => $a['refresh_token']])->getStatusCode());
+        $payload = json_decode(\Defuse\Crypto\Crypto::decryptWithPassword($a['refresh_token'], $this->config->encryptionKey), true);
+        $payload['expire_time'] = time() - 1;
+        $expired = \Defuse\Crypto\Crypto::encryptWithPassword(json_encode($payload), $this->config->encryptionKey);
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $expired])->getStatusCode());
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => 'invalid'])->getStatusCode());
+        $this->refresh($b);
+    }
+    public function testReplayDoesNotAffectAnotherUsersFamily(): void
+    {
+        $a = $this->tokens();
+        $b = $this->refresh($a);
+        $this->store->insert('access_token', 'foreign-access', ['client_id' => 'codex', 'user_id' => '28', 'scopes' => ['client.list'], 'expires_at' => time() + 300, 'revoked' => false]);
+        $this->store->insert('refresh_token', 'foreign-refresh', ['access_token_id' => 'foreign-access', 'family_id' => 'foreign-family', 'used_at' => null, 'expires_at' => time() + 3600, 'revoked' => false]);
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $a['refresh_token']])->getStatusCode());
+        self::assertFalse($this->store->record('access_token', 'foreign-access')['revoked']);
+        self::assertFalse($this->store->record('refresh_token', 'foreign-refresh')['revoked']);
+    }
+    public function testWrongConfidentialSecretCannotTriggerReplayRevocation(): void
+    {
+        $a = $this->tokens(); $b = $this->refresh($a);
+        $client = $this->store->client('codex');
+        $client['confidential'] = true; $client['secret_hash'] = password_hash('correct-secret', PASSWORD_DEFAULT);
+        $this->store->saveClient($client);
+        $params = ['grant_type' => 'refresh_token', 'client_id' => 'codex', 'client_secret' => 'wrong', 'refresh_token' => $a['refresh_token']];
+        self::assertSame(401, $this->exchange($params)->getStatusCode());
+        self::assertSame(200, $this->exchange([...$params, 'client_secret' => 'correct-secret', 'refresh_token' => $b['refresh_token']])->getStatusCode());
+    }
+    public function testManuallyRevokedUnusedTokenDoesNotTriggerFamilyRevocation(): void
+    {
+        $a = $this->tokens();
+        $payload = json_decode(\Defuse\Crypto\Crypto::decryptWithPassword($a['refresh_token'], $this->config->encryptionKey), true);
+        $record = $this->store->record('refresh_token', $payload['refresh_token_id']);
+        $this->store->insert('refresh_token', 'family-probe', [...$record, 'access_token_id' => 'probe-access']);
+        $this->store->revoke('refresh_token', $payload['refresh_token_id']);
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $a['refresh_token']])->getStatusCode());
+        self::assertFalse($this->store->record('refresh_token', 'family-probe')['revoked']);
+    }
+    public function testFailureAfterConsumptionRollsBackAndResetsRepositoryContext(): void
+    {
+        $a = $this->tokens(); $before = $this->store->records;
+        $inner = $this->store;
+        $fault = $this->createStub(\Light\OAuth2\Contract\RefreshTokenStore::class);
+        foreach (['client', 'saveClient', 'record', 'revoke', 'consumeRefreshToken', 'revokeRefreshTokenFamily', 'transaction'] as $method) {
+            $fault->method($method)->willReturnCallback(fn(...$args) => $inner->$method(...$args));
+        }
+        $failOnce = true;
+        $fault->method('insert')->willReturnCallback(function ($type, $id, $record) use ($inner, &$failOnce) {
+            if ($type === 'refresh_token' && $failOnce) { $failOnce = false; throw new \RuntimeException('Simulated persistence failure'); }
+            $inner->insert($type, $id, $record);
+        });
+        $this->provider = new OAuthProvider($this->config, $fault, $this->permissions, $this->flow);
+        try { $this->refresh($a); self::fail('Persistence failure not propagated'); }
+        catch (\RuntimeException $error) { self::assertSame('Simulated persistence failure', $error->getMessage()); }
+        self::assertSame($before, $inner->records);
+        $this->refresh($a);
+        $this->tokens();
+        self::assertCount(2, array_unique(array_column($inner->records['refresh_token'], 'family_id')));
+    }
+    public function testFailedExchangeDoesNotConsumeRefreshAndLegacyTokenGetsFamily(): void
+    {
+        $a = $this->tokens();
+        foreach ($this->store->records['refresh_token'] as &$record) unset($record['family_id'], $record['used_at']);
+        unset($record);
+        $this->permissions->allowed = false;
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $a['refresh_token']])->getStatusCode());
+        $this->permissions->allowed = true;
+        $b = $this->refresh($a);
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $a['refresh_token']])->getStatusCode());
+        self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $b['refresh_token']])->getStatusCode());
+    }
+    public function testMysqlReplayRevocationCommitsDespiteInvalidGrant(): void
+    {
+        if (!getenv('OAUTH_TEST_DSN')) self::markTestSkipped('MySQL test connection required');
+        $pdo = new \PDO(getenv('OAUTH_TEST_DSN'), getenv('OAUTH_TEST_USER') ?: '', getenv('OAUTH_TEST_PASSWORD') ?: '');
+        $sql = preg_replace('/^--.*$/m', '', file_get_contents(dirname(__DIR__) . '/migrations/001_oauth.sql'));
+        foreach (explode(';', str_replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMPORARY TABLE', $sql)) as $statement) {
+            if (trim($statement) !== '') $pdo->exec($statement);
+        }
+        $store = new \Light\OAuth2\Storage\PdoStore($pdo);
+        $store->saveClient($this->store->client('codex'));
+        $this->provider = new OAuthProvider($this->config, $store, $this->permissions, $this->flow);
+        $this->testReplayRevokesDescendantsButNotIndependentAuthorization();
+        self::assertFalse($pdo->inTransaction());
+        self::assertSame(3, (int) $pdo->query("SELECT COUNT(*) FROM oauth_credentials WHERE type = 'refresh_token' AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.used_at')) REGEXP '^[0-9]+$'")->fetchColumn());
+    }
+    public function testMysqlConcurrentRefreshRevokesTheWinningDescendant(): void
+    {
+        if (!getenv('OAUTH_TEST_DSN') || !function_exists('proc_open')) self::markTestSkipped('MySQL and process spawning required');
+        $connect = fn() => new \PDO(getenv('OAUTH_TEST_DSN'), getenv('OAUTH_TEST_USER') ?: '', getenv('OAUTH_TEST_PASSWORD') ?: '');
+        $pdo = $connect();
+        $store = new \Light\OAuth2\Storage\PdoStore($pdo);
+        $client = $this->store->client('codex');
+        $client['id'] = 'refresh-race-' . bin2hex(random_bytes(12));
+        $store->createClient($client);
+        $workers = [];
+        $blocker = null;
+        try {
+            $this->provider = new OAuthProvider($this->config, $store, $this->permissions, $this->flow);
+            $authorization = $this->authorization(['client_id' => $client['id']]);
+            self::assertSame(302, $authorization->getStatusCode());
+            parse_str(parse_url($authorization->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+            $response = $this->exchange(['grant_type' => 'authorization_code', 'client_id' => $client['id'], 'redirect_uri' => $client['redirect_uris'][0], 'code' => $query['code'], 'code_verifier' => $this->verifier]);
+            self::assertSame(200, $response->getStatusCode());
+            $tokens = json_decode((string) $response->getBody(), true);
+            $input = json_encode(['config' => get_object_vars($this->config), 'params' => ['grant_type' => 'refresh_token', 'client_id' => $client['id'], 'refresh_token' => $tokens['refresh_token']]], JSON_THROW_ON_ERROR);
+            // Hold the shared client lock until both workers are ready to exchange.
+            $blocker = $connect();
+            $blocker->beginTransaction();
+            $statement = $blocker->prepare('SELECT id FROM oauth_clients WHERE id = ? FOR UPDATE');
+            $statement->execute([$client['id']]);
+            for ($i = 0; $i < 2; $i++) {
+                $process = proc_open([PHP_BINARY, __DIR__ . '/refresh-worker.php'], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                if (!is_resource($process)) throw new \RuntimeException('Cannot start refresh worker');
+                $workers[] = [$process, $pipes];
+                stream_set_timeout($pipes[1], 20);
+                fwrite($pipes[0], $input); fclose($pipes[0]);
+                self::assertSame("ready\n", fgets($pipes[1]));
+            }
+            $blocker->commit();
+            $results = [];
+            foreach ($workers as [$process, $pipes]) {
+                $results[] = json_decode(stream_get_contents($pipes[1]), true, 512, JSON_THROW_ON_ERROR);
+                self::assertSame('', stream_get_contents($pipes[2]));
+            }
+            $statuses = array_column($results, 'status'); sort($statuses);
+            self::assertSame([200, 400], $statuses);
+            $winner = array_values(array_filter($results, fn($r) => $r['status'] === 200))[0]['body'];
+            $failed = array_values(array_filter($results, fn($r) => $r['status'] === 400))[0]['body'];
+            self::assertSame('invalid_grant', $failed['error']);
+            self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => $client['id'], 'refresh_token' => $winner['refresh_token']])->getStatusCode());
+            try { $this->provider->validator()->validate($this->request($winner['access_token'])); self::fail('Race winner access token survived replay'); }
+            catch (OAuthServerException) {}
+        } finally {
+            if ($blocker?->inTransaction()) $blocker->rollBack();
+            foreach ($workers as [$process, $pipes]) {
+                if (proc_get_status($process)['running']) proc_terminate($process);
+                foreach ($pipes as $pipe) if (is_resource($pipe)) fclose($pipe);
+                proc_close($process);
+            }
+            // Remove only credentials belonging to the unique test client.
+            $statement = $pdo->prepare("SELECT id FROM oauth_credentials WHERE type = 'access_token' AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.client_id')) = ?");
+            $statement->execute([$client['id']]);
+            $refresh = $pdo->prepare("DELETE FROM oauth_credentials WHERE type = 'refresh_token' AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.access_token_id')) = ?");
+            foreach ($statement->fetchAll(\PDO::FETCH_COLUMN) as $accessId) $refresh->execute([$accessId]);
+            $statement = $pdo->prepare("DELETE FROM oauth_credentials WHERE JSON_UNQUOTE(JSON_EXTRACT(record, '$.client_id')) = ?");
+            $statement->execute([$client['id']]);
+            $statement = $pdo->prepare('DELETE FROM oauth_clients WHERE id = ?'); $statement->execute([$client['id']]);
+        }
     }
     public function testSecondFactorAndInvalidAuthorizationAreRejected(): void
     {

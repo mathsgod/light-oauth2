@@ -13,7 +13,30 @@ OAuth 2.0 Authorization Code + S256 PKCE integration for Light, powered by Leagu
 - Light authentication adapter and permission scopes. Effective rights require token scope, client-allowed scope, OAuth-exposed scope and the user's current permission.
 - Default Light login/2FA and consent pages, with customizable `AuthorizationFlow`.
 
-This package does not supply a login/2FA UI, dynamic client registration, CIMD, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider serves one configured resource; it does not implement token exchange between resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow. Refresh tokens rotate, but replay does not currently revoke a whole token family.
+This package does not supply dynamic client registration, CIMD, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider serves one configured resource; it does not implement token exchange between resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow.
+
+### Refresh token replay protection
+
+Each initial authorization starts an independent refresh-token family. Successful refresh
+marks the old token as used and issues a replacement in the same family. Reusing a used,
+unexpired token with valid client authentication revokes every refresh token and associated
+access token in that family and returns `invalid_grant`. This security revocation commits
+even though the exchange is rejected. Other authorizations (including another authorization
+by the same user to the same client) remain valid. Expired, malformed, wrong-client and
+manually revoked unused tokens do not trigger family revocation.
+
+Clients must serialize refresh requests and save the replacement refresh token. Retrying
+a successfully consumed token, including after losing the response, revokes its family and
+requires new authorization; there is no retry grace period. Each replacement still expires
+30 days after issuance by default; there is no absolute family lifetime.
+
+Custom stores must implement `RefreshTokenStore`, including transactional consumption,
+family revocation and locking that serializes exchanges for a family. `PdoStore` implements
+this using the client row lock and existing credential JSON (`family_id`, `used_at`), so no
+SQL migration is required. Active legacy refresh tokens acquire a family on their first
+successful rotation after upgrading. Previously revoked legacy tokens have no consumption
+history and cannot retroactively be linked to replacements. Retain used records while their
+token can still be presented unexpired, and retain refresh-to-access links needed for revocation.
 
 ## Light integration
 
@@ -122,7 +145,7 @@ Grant these permissions through Light RBAC for delegated administrators.
 Light's `addPermissions()` extension hook makes these rights discoverable in
 the permissions page; upgrade the local Light checkout to include this hook.
 The existing `Administrators` wildcard already grants access. Stores that only
-implement `Store` continue to work without the management API.
+implement `RefreshTokenStore` continue to work without the management API.
 Clear Light's schema cache when upgrading an existing deployment.
 
 ## Personal authorizations
@@ -149,4 +172,13 @@ OAUTH_TEST_USER=... OAUTH_TEST_PASSWORD=... \
 LIGHT_SOURCE_PATH=/path/to/light composer test
 ```
 
-The MySQL test creates connection-local temporary tables; it does not modify application tables. Optional application bootstrap and browser-flow tests use the Light checkout's `.env` and database when `LIGHT_SOURCE_PATH` is set, rolling back ORM transactions and removing temporary clients. They cover the default pages, consent CSRF/session binding, callback CSP and custom authorization flows. Tests also cover PKCE, code replay, refresh rotation/scope escalation, revocation, client binding, resource audience, dynamic permission checks, incomplete 2FA, denied consent, metadata, Light integration and storage rollback. Separate multi-connection concurrency/load testing has not been run.
+MySQL persistence and replay tests use connection-local temporary tables. The two-process
+refresh race test uses one uniquely named client in the configured test database, removes
+its credentials and client afterwards, and verifies one exchange succeeds while the second
+detects reuse and revokes the winning descendant. Use a dedicated test database. Optional
+application bootstrap and browser-flow tests use the Light checkout's `.env` and database
+when `LIGHT_SOURCE_PATH` is set, rolling back ORM transactions and removing temporary clients.
+Tests also cover PKCE, code replay, refresh-family isolation, failed-exchange rollback,
+legacy token rotation, expiry versus reuse, scope escalation, revocation, client binding,
+resource audience, permissions, 2FA, consent, metadata and Light integration. Load testing
+has not been run.

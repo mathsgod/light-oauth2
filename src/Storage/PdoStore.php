@@ -3,7 +3,7 @@ declare(strict_types=1);
 namespace Light\OAuth2\Storage;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
 use PDO;
-final class PdoStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore
+final class PdoStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore, \Light\OAuth2\Contract\RefreshTokenStore
 {
     public function __construct(private PDO $pdo)
     {
@@ -121,6 +121,23 @@ final class PdoStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth
     {
         $statement = $this->pdo->prepare('UPDATE oauth_credentials SET revoked = 1 WHERE type = ? AND id = ?');
         $statement->execute([$type, $id]);
+    }
+    public function consumeRefreshToken(string $id, string $familyId): void
+    {
+        $statement = $this->pdo->prepare("UPDATE oauth_credentials SET revoked = 1, record = JSON_SET(record, '$.family_id', ?, '$.used_at', ?) WHERE type = 'refresh_token' AND id = ?");
+        $statement->execute([$familyId, time(), $id]);
+    }
+    public function revokeRefreshTokenFamily(string $familyId): void
+    {
+        // The exchange already holds the client lock, so this family's membership
+        // cannot change. Avoid locking unrelated families during the JSON scan;
+        // revoke() locks the matching credentials by their primary keys.
+        $statement = $this->pdo->prepare("SELECT id, JSON_UNQUOTE(JSON_EXTRACT(record, '$.access_token_id')) AS access_id FROM oauth_credentials WHERE type = 'refresh_token' AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.family_id')) = ?");
+        $statement->execute([$familyId]);
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $this->revoke('refresh_token', $row['id']);
+            $this->revoke('access_token', $row['access_id']);
+        }
     }
     public function transaction(callable $operation): mixed
     {
