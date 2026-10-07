@@ -29,4 +29,9 @@ final readonly class Config
         }
     }
     public function endpoint(string $name): string { return rtrim($this->issuer, '/') . $this->routePrefix . '/' . $name; }
+    /** Keep issuer/keys/settings while selecting the audience validated by a resource server. */
+    public function forResource(string $resource): self
+    {
+        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl);
+    }
 }

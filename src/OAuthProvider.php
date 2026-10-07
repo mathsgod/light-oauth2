@@ -17,10 +17,10 @@ final class OAuthProvider
     private RevocationEndpoint $revocation;
     private TokenValidator $validator;
     private RefreshTokenRepository $refresh;
-    public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow)
+    public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow, private ?TokenExchangePolicy $exchangePolicy = null)
     {
         $this->scopes = new ScopeRepository($permissions);
-        $this->server = new AuthorizationServer(new ClientRepository($store), new AccessTokenRepository($store, $config), $this->scopes, $config->privateKey, $config->encryptionKey);
+        $this->server = new AuthorizationServer(new ClientRepository($store), new AccessTokenRepository($store, $config), $this->scopes, $config->privateKey, $config->encryptionKey, new Response\TokenResponse());
         if (!$store instanceof Contract\RefreshTokenStore) throw new \LogicException('OAuth stores must implement RefreshTokenStore for refresh replay protection');
         $refresh = $this->refresh = new RefreshTokenRepository($store);
         $grant = new AuthCodeGrant(new AuthCodeRepository($store), $refresh, new \DateInterval($config->codeTtl));
@@ -30,6 +30,9 @@ final class OAuthProvider
         $grant->setRefreshTokenTTL(new \DateInterval($config->refreshTokenTtl));
         $this->server->enableGrantType($grant, new \DateInterval($config->accessTokenTtl));
         $this->validator = new TokenValidator($config, $store);
+        if ($exchangePolicy !== null) {
+            $this->server->enableGrantType(new Grant\TokenExchangeGrant($config, $store, $this->validator, $exchangePolicy), new \DateInterval($exchangePolicy->ttl));
+        }
         $this->revocation = new RevocationEndpoint($config, $store, $this->validator);
     }
     public function revoke(ServerRequestInterface $request): ResponseInterface { return $this->revocation->handle($request); }
@@ -57,7 +60,7 @@ final class OAuthProvider
         try {
             $params = $request->getParsedBody();
             if (!is_array($params)) throw OAuthServerException::invalidRequest('grant_type');
-            $this->validateResource($params);
+            if (($params['grant_type'] ?? null) !== Grant\TokenExchangeGrant::IDENTIFIER || $this->exchangePolicy === null) $this->validateResource($params);
             $this->refresh->reset();
             $response = $this->store->transaction(function () use ($request) {
                 try { return $this->server->respondToAccessTokenRequest($request, new \Laminas\Diactoros\Response()); }
@@ -86,7 +89,7 @@ final class OAuthProvider
             'token_endpoint' => $this->config->endpoint('token'),
             'revocation_endpoint' => $this->config->endpoint('revoke'),
             'response_types_supported' => ['code'],
-            'grant_types_supported' => ['authorization_code', 'refresh_token'],
+            'grant_types_supported' => $this->exchangePolicy === null ? ['authorization_code', 'refresh_token'] : ['authorization_code', 'refresh_token', Grant\TokenExchangeGrant::IDENTIFIER],
             'code_challenge_methods_supported' => ['S256'],
             'token_endpoint_auth_methods_supported' => ['none', 'client_secret_basic', 'client_secret_post'],
             'scopes_supported' => $this->permissions->scopes(),

@@ -30,7 +30,7 @@ final class RevocationEndpoint
             // Unknown, expired and already revoked tokens still return HTTP 200.
             if (substr_count($token, '.') === 2) {
                 try {
-                    $context = $this->validator->validate($request->withHeader('Authorization', 'Bearer ' . $token));
+                    $context = $this->validatorFor($token)->validate($request->withHeader('Authorization', 'Bearer ' . $token));
                     if ($context->clientId === $clientId) $this->store->revoke('access_token', $context->tokenId);
                 } catch (OAuthServerException) {}
             } else {
@@ -48,5 +48,17 @@ final class RevocationEndpoint
             }
             return (new Response())->withHeader('Cache-Control', 'no-store');
         } catch (OAuthServerException $error) { return $error->generateHttpResponse(new Response())->withHeader('Cache-Control', 'no-store'); }
+    }
+    private function validatorFor(string $token): TokenValidator
+    {
+        // Unverified jti is only a lookup hint. Audience comes from our stored
+        // issuance record; signature, expiry and caller ownership are still checked.
+        $payload = json_decode(base64_decode(strtr(explode('.', $token)[1], '-_', '+/')), true);
+        $id = is_array($payload) ? ($payload['jti'] ?? null) : null;
+        $record = is_string($id) ? $this->store->record('access_token', $id) : null;
+        if ($record && isset($record['exchange_subject'], $record['resource'])) {
+            return new TokenValidator($this->config->forResource($record['resource']), $this->store);
+        }
+        return $this->validator;
     }
 }

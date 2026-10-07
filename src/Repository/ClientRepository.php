@@ -16,7 +16,8 @@ final class ClientRepository implements ClientRepositoryInterface
     public function validateClient(string $clientIdentifier, ?string $clientSecret, ?string $grantType): bool
     {
         $client = $this->getClientEntity($clientIdentifier);
-        if (!$client || !in_array($grantType, ['authorization_code', 'refresh_token'], true)) return false;
+        if (!$client || !in_array($grantType, ['authorization_code', 'refresh_token', \Light\OAuth2\Grant\TokenExchangeGrant::IDENTIFIER], true)) return false;
+        if ($grantType === \Light\OAuth2\Grant\TokenExchangeGrant::IDENTIFIER && !$client->isConfidential()) return false;
         return !$client->isConfidential() || ($clientSecret !== null && password_verify($clientSecret, $client->record['secret_hash'] ?? ''));
     }
 }

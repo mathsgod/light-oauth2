@@ -12,8 +12,9 @@ OAuth 2.0 Authorization Code + S256 PKCE integration for Light, powered by Leagu
 - Resource-specific JWT audience, issuer validation, expiry/signature/revocation validation.
 - Light authentication adapter and permission scopes. Effective rights require token scope, client-allowed scope, OAuth-exposed scope and the user's current permission.
 - Default Light login/2FA and consent pages, with customizable `AuthorizationFlow`.
+- Opt-in RFC 8693 access-token exchange with confidential-client authentication, explicit source/target allowlists and scope narrowing.
 
-This package does not supply dynamic client registration, CIMD, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider serves one configured resource; it does not implement token exchange between resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow.
+This package does not supply dynamic client registration, CIMD, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider authorizes one configured resource; optional token exchange can issue tokens for explicitly allowed downstream resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow.
 
 ### Refresh token replay protection
 
@@ -47,6 +48,8 @@ The application calls `$provider->register($app, $loadActiveUser)` before `$app-
 The user loader must return an active `Light\Model\User` or null. `LightPermissionProvider` rejects missing/disabled users (`status != 0`) and checks current RBAC rights. Projects with extra account restrictions should implement `PermissionProvider` accordingly. Light's RBAC cache policy still determines how quickly permission changes become visible.
 
 ## Setup
+
+For service-to-service access on behalf of a user (including MCP to GraphQL), see [access-token exchange](docs/TOKEN_EXCHANGE.md).
 
 1. `composer install`.
 2. Apply `migrations/001_oauth.sql` through the application's migration runner.

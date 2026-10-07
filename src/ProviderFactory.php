@@ -12,7 +12,7 @@ use PDO;
 
 final class ProviderFactory
 {
-    public static function registerFromEnvironment(App $app, ?AuthorizationFlow $flow = null): ?OAuthProvider
+    public static function registerFromEnvironment(App $app, ?AuthorizationFlow $flow = null, ?TokenExchangePolicy $exchangePolicy = null): ?OAuthProvider
     {
         if (!filter_var($_ENV['OAUTH_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
             return null;
@@ -33,6 +33,7 @@ final class ProviderFactory
             new PdoStore(self::connection()),
             new LightPermissionProvider($app, $scopes),
             $flow ?? new BrowserAuthorizationFlow($app),
+            $exchangePolicy,
         );
         $provider->register($app, static function (string $id): ?User {
             if (!ctype_digit($id)) return null;

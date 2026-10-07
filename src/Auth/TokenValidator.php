@@ -33,6 +33,14 @@ final class TokenValidator
         }
         $client = $this->store->client($record['client_id']);
         if (!$client || !$client['enabled']) throw OAuthServerException::accessDenied('Client disabled');
-        return new TokenContext((string) $record['user_id'], $record['client_id'], $id, array_values(array_intersect($record['scopes'], $client['scopes'])));
+        if (isset($record['resource']) && $record['resource'] !== $this->config->resource) throw OAuthServerException::accessDenied('Invalid stored resource');
+        $scopes = array_intersect($record['scopes'], $client['scopes']);
+        if (isset($record['exchange_subject'])) {
+            $subject = $this->store->record('access_token', $record['exchange_subject']);
+            $sourceClient = $subject ? $this->store->client($subject['client_id']) : null;
+            if (!$subject || !$sourceClient || empty($sourceClient['enabled'])) throw OAuthServerException::accessDenied('Invalid exchange source');
+            $scopes = array_intersect($scopes, $subject['scopes'], $sourceClient['scopes']);
+        }
+        return new TokenContext((string) $record['user_id'], $record['client_id'], $id, array_values($scopes), $token->claims()->get('exp')->getTimestamp());
     }
 }

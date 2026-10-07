@@ -18,12 +18,25 @@ final class AccessTokenRepository implements AccessTokenRepositoryInterface
     }
     public function persistNewAccessToken(AccessTokenEntityInterface $token): void
     {
-        $this->store->insert('access_token', $token->getIdentifier(), ['expires_at' => $token->getExpiryDateTime()->getTimestamp(), 'revoked' => false, 'user_id' => $token->getUserIdentifier(), 'client_id' => $token->getClient()->getIdentifier(), 'scopes' => array_map(fn($s) => $s->getIdentifier(), $token->getScopes())]);
+        $record = ['expires_at' => $token->getExpiryDateTime()->getTimestamp(), 'revoked' => false, 'user_id' => $token->getUserIdentifier(), 'client_id' => $token->getClient()->getIdentifier(), 'scopes' => array_map(fn($s) => $s->getIdentifier(), $token->getScopes())];
+        if ($token instanceof AccessToken) {
+            $record['resource'] = $token->resource();
+            if ($token->exchangeSubject() !== null) $record['exchange_subject'] = $token->exchangeSubject();
+        }
+        $this->store->insert('access_token', $token->getIdentifier(), $record);
     }
     public function revokeAccessToken(string $tokenId): void { $this->store->revoke('access_token', $tokenId); }
     public function isAccessTokenRevoked(string $tokenId): bool
     {
         $record = $this->store->record('access_token', $tokenId);
-        return !$record || $record['revoked'] || $record['expires_at'] <= time();
+        if (!$record || $record['revoked'] || $record['expires_at'] <= time()) return true;
+        if (isset($record['exchange_subject'])) {
+            $subject = $this->store->record('access_token', $record['exchange_subject']);
+            if (!$subject || $subject['revoked'] || $subject['expires_at'] <= time() || isset($subject['exchange_subject']) ||
+                (string) $subject['user_id'] !== (string) $record['user_id']) return true;
+            $client = $this->store->client($subject['client_id']);
+            if (!$client || empty($client['enabled'])) return true;
+        }
+        return false;
     }
 }
