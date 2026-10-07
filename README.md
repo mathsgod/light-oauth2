@@ -125,6 +125,18 @@ The existing `Administrators` wildcard already grants access. Stores that only
 implement `Store` continue to work without the management API.
 Clear Light's schema cache when upgrading an existing deployment.
 
+## Personal authorizations
+
+Stores implementing `AuthorizationStore` (including `PdoStore`) expose
+`myOAuthAuthorizations { clientId clientName scopes enabled accessTokens refreshTokens authorizationCodes expiresAt }`
+and `revokeMyOAuthAuthorization(clientId: String!): Boolean!`.
+Both require login and derive ownership from the authenticated user; they accept no user ID.
+The Nuxt Light user settings page `/User/setting/oauth` lists active authorizations per application.
+Revocation disables all of that user's access tokens, linked refresh tokens and authorization codes
+for the selected client, including refresh tokens whose access token has expired.
+The application must obtain a new authorization. Other users' grants and the OAuth client remain intact.
+The response contains no token values or client secrets. No administrator permission is required.
+
 ## Tests
 
 ```bash

@@ -3,7 +3,7 @@ declare(strict_types=1);
 namespace Light\OAuth2\Storage;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
 use PDO;
-final class PdoStore implements \Light\OAuth2\Contract\ClientStore
+final class PdoStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore
 {
     public function __construct(private PDO $pdo)
     {
@@ -66,6 +66,45 @@ final class PdoStore implements \Light\OAuth2\Contract\ClientStore
             if (($error->errorInfo[1] ?? null) === 1062) throw UniqueTokenIdentifierConstraintViolationException::create();
             throw $error;
         }
+    }
+    public function userCredentials(string $userId): array
+    {
+        return $this->credentialsForUser($userId);
+    }
+    private function credentialsForUser(string $userId, ?string $clientId = null): array
+    {
+        $lock = $this->pdo->inTransaction() ? ' FOR UPDATE' : '';
+        $sql = "SELECT type, id, record, revoked FROM oauth_credentials WHERE type IN ('access_token', 'auth_code') AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.user_id')) = ?";
+        $args = [$userId];
+        if ($clientId !== null) {
+            $sql .= " AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.client_id')) = ?";
+            $args[] = $clientId;
+        }
+        $statement = $this->pdo->prepare($sql . $lock);
+        $statement->execute($args);
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $accessIds = array_column(array_filter($rows, fn(array $row): bool => $row['type'] === 'access_token'), 'id');
+        foreach (array_chunk($accessIds, 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $statement = $this->pdo->prepare("SELECT type, id, record, revoked FROM oauth_credentials WHERE type = 'refresh_token' AND JSON_UNQUOTE(JSON_EXTRACT(record, '$.access_token_id')) IN ({$placeholders})" . $lock);
+            $statement->execute($chunk);
+            $rows = [...$rows, ...$statement->fetchAll(PDO::FETCH_ASSOC)];
+        }
+        return array_map(static function (array $row): array {
+            $record = json_decode($row['record'], true, 512, JSON_THROW_ON_ERROR);
+            $record['revoked'] = (bool) $row['revoked'];
+            return ['type' => $row['type'], 'id' => $row['id'], 'record' => $record];
+        }, $rows);
+    }
+    public function revokeUserAuthorization(string $userId, string $clientId): bool
+    {
+        return $this->transaction(function () use ($userId, $clientId): bool {
+            // Serialize with exchanges for this client before locking credentials.
+            $this->client($clientId);
+            $credentials = $this->credentialsForUser($userId, $clientId);
+            foreach ($credentials as $credential) $this->revoke($credential['type'], $credential['id']);
+            return $credentials !== [];
+        });
     }
     public function record(string $type, string $id): ?array
     {

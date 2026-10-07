@@ -107,6 +107,12 @@ final class OAuthProvider
                 'icon' => 'sym_o_key', 'permission' => 'oauth_client.list',
             ]]);
         }
+        if ($this->store instanceof Contract\AuthorizationStore) {
+            $manager = new Management\AuthorizationManager($this->store);
+            $app->getContainer()->add(Controller\OAuthAuthorizationController::class, new Controller\OAuthAuthorizationController($manager));
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Controller');
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');
+        }
         $router = $app->getRouter();
         $issuerPath = rtrim(parse_url($this->config->issuer, PHP_URL_PATH) ?? '', '/');
         $routePrefix = $issuerPath . $this->config->routePrefix;

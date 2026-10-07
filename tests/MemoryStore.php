@@ -3,7 +3,7 @@ declare(strict_types=1);
 namespace Light\OAuth2\Tests;
 use Light\OAuth2\Storage\ClientRegistration;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
-final class MemoryStore implements \Light\OAuth2\Contract\ClientStore
+final class MemoryStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore
 {
     public array $clients = [];
     public array $records = [];
@@ -36,6 +36,39 @@ final class MemoryStore implements \Light\OAuth2\Contract\ClientStore
         $this->records[$type][$id] = $record;
     }
     public function record(string $type, string $id): ?array { return $this->records[$type][$id] ?? null; }
+    public function userCredentials(string $userId): array
+    {
+        $result = [];
+        $accessIds = [];
+        foreach (['access_token', 'auth_code'] as $type) {
+            foreach ($this->records[$type] ?? [] as $id => $record) {
+                if ((string) ($record['user_id'] ?? '') !== $userId) continue;
+                $result[] = ['type' => $type, 'id' => $id, 'record' => $record];
+                if ($type === 'access_token') $accessIds[] = $id;
+            }
+        }
+        foreach ($this->records['refresh_token'] ?? [] as $id => $record) {
+            if (in_array($record['access_token_id'], $accessIds, true)) $result[] = ['type' => 'refresh_token', 'id' => $id, 'record' => $record];
+        }
+        return $result;
+    }
+    public function revokeUserAuthorization(string $userId, string $clientId): bool
+    {
+        $credentials = $this->userCredentials($userId);
+        $access = [];
+        foreach ($credentials as $credential) {
+            if ($credential['type'] === 'access_token') $access[$credential['id']] = $credential['record'];
+        }
+        $found = false;
+        foreach ($credentials as $credential) {
+            $record = $credential['record'];
+            $source = $credential['type'] === 'refresh_token' ? $access[$record['access_token_id']] : $record;
+            if (($source['client_id'] ?? null) !== $clientId) continue;
+            $this->revoke($credential['type'], $credential['id']);
+            $found = true;
+        }
+        return $found;
+    }
     public function revoke(string $type, string $id): void { if (isset($this->records[$type][$id])) $this->records[$type][$id]['revoked'] = true; }
     public function transaction(callable $operation): mixed
     {
