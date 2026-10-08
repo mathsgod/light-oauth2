@@ -3,7 +3,7 @@ declare(strict_types=1);
 namespace Light\OAuth2\Storage;
 final class ClientRegistration
 {
-    public static function validate(array $client): void
+    public static function validate(array $client, bool $allowLocalhost = false): void
     {
         if (!is_string($client['id'] ?? null) || $client['id'] === '' || strlen($client['id']) > 191 || !preg_match('/^[\x21-\x7E]+$/D', $client['id']) ||
             !is_string($client['name'] ?? null) || !is_bool($client['confidential'] ?? null) || !is_bool($client['enabled'] ?? null) ||
@@ -15,7 +15,7 @@ final class ClientRegistration
             if (!is_string($uri)) throw new \InvalidArgumentException('Invalid redirect URI');
             $parts = parse_url($uri);
             if (!$parts || empty($parts['host']) || isset($parts['fragment']) || isset($parts['user']) ||
-                (($parts['scheme'] ?? '') !== 'https' && !(($parts['scheme'] ?? '') === 'http' && in_array($parts['host'], ['127.0.0.1', '[::1]'], true)))) {
+                (($parts['scheme'] ?? '') !== 'https' && !(($parts['scheme'] ?? '') === 'http' && in_array($parts['host'], $allowLocalhost ? ['127.0.0.1', '[::1]', 'localhost'] : ['127.0.0.1', '[::1]'], true)))) {
                 throw new \InvalidArgumentException('Redirect URI requires HTTPS or a loopback IP');
             }
         }

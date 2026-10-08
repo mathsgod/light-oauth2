@@ -47,7 +47,10 @@ and key-based authentication metadata are rejected. Scope is intersected with se
 permissions; when omitted it uses the server's configured scopes. User permission checks,
 PKCE S256 and explicit browser consent remain required.
 
-Callbacks must be HTTPS or HTTP loopback IPs. League validates the exact callback except
+Callbacks must be HTTPS or HTTP loopback IPs; CIMD also accepts the exact `localhost`
+hostname because Codex publishes it alongside its loopback IP callback. HTTP `localhost`
+callbacks still require exact port matching; variable-port matching applies only to
+loopback IPs. Metadata fetching continues to reject localhost and private addresses. League validates the exact callback except
 for the variable port allowance for native loopback callbacks (RFC 8252); host, path and
 query must still match. Wildcard callbacks are not supported.
 

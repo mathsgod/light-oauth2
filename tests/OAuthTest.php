@@ -75,7 +75,7 @@ final class OAuthTest extends TestCase
         $config = new Config($this->config->issuer, $this->config->resource, self::$privateKey, self::$publicKey, str_repeat('x', 32), cimdEnabled: true);
         $fetcher = new class implements \Light\OAuth2\ClientMetadata\MetadataFetcher {
             public function fetch(string $url): array {
-                return ['client_id' => $url, 'client_name' => 'Codex', 'redirect_uris' => ['http://127.0.0.1/callback'], 'token_endpoint_auth_method' => 'none', 'scope' => 'client.list'];
+                return ['client_id' => $url, 'client_name' => 'Codex', 'redirect_uris' => ['http://127.0.0.1/callback', 'http://localhost/callback'], 'token_endpoint_auth_method' => 'none', 'scope' => 'client.list'];
             }
         };
         $this->provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow, metadataFetcher: $fetcher);

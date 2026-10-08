@@ -33,6 +33,23 @@ final class ClientMetadataTest extends TestCase
         self::assertSame(1, $fetcher->calls);
         self::assertSame([], $store->clients);
     }
+    public function testCodexDocumentWithLocalhostAlternativeResolves(): void
+    {
+        $redirects = ['http://127.0.0.1/callback/wSHsHZ6KgDv5', 'http://localhost/callback/wSHsHZ6KgDv5'];
+        $resolver = new ClientResolver(new MemoryStore(), ['client.list'], $this->fetcher(['redirect_uris' => $redirects]));
+        $record = $resolver->client(self::ID);
+        self::assertNotNull($record);
+        self::assertSame($redirects, $record['redirect_uris']);
+        $validator = new \League\OAuth2\Server\RedirectUriValidators\RedirectUriValidator($record['redirect_uris']);
+        self::assertTrue($validator->validateRedirectUri('http://127.0.0.1:21486/callback/wSHsHZ6KgDv5'));
+        self::assertFalse($validator->validateRedirectUri('http://127.0.0.1:21486/callback/other'));
+        self::assertFalse($validator->validateRedirectUri('http://localhost:21486/callback/wSHsHZ6KgDv5'));
+        foreach (['localhost.evil.example', 'evil.localhost', '192.168.1.1'] as $host) {
+            $bad = new ClientResolver(new MemoryStore(), ['client.list'], $this->fetcher(['redirect_uris' => ['http://' . $host . '/callback']]));
+            self::assertNull($bad->client(self::ID));
+        }
+    }
+
     public function testDisabledFeatureAndDatabaseOverride(): void
     {
         $store = new MemoryStore();

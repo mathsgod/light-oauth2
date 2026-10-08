@@ -39,7 +39,9 @@ final class ClientResolver
             // Validate the same record shape without the database ID length limit.
             $record = ['id' => 'cimd', 'name' => $document['client_name'] ?? $id,
                 'redirect_uris' => $redirects, 'scopes' => $allowedScopes, 'confidential' => false, 'enabled' => true];
-            ClientRegistration::validate($record);
+            // Codex publishes localhost alongside its loopback IP callback.
+            // These are browser redirects, never metadata fetch destinations.
+            ClientRegistration::validate($record, allowLocalhost: true);
             foreach ($redirects as $uri) {
                 if (strlen($uri) > 2048 || preg_match('/[^\x21-\x7E]/', $uri) || str_contains($uri, '\\')) return null;
             }
