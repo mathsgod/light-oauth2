@@ -55,8 +55,8 @@ for the variable port allowance for native loopback callbacks (RFC 8252); host, 
 query must still match. Wildcard callbacks are not supported.
 
 The default fetcher allows only HTTPS URLs with a path and no credentials, fragment or
-dot path segments. It rejects private/reserved IP addresses and DNS responses containing
-any non-public address, pins DNS for the TLS connection, and disables redirects. Requests
+dot path segments. It filters out private/reserved DNS addresses, rejects lookups with no public address,
+pins the selected public IP for the TLS connection, and disables redirects. Requests
 have a 3-second connect timeout, a 5-second total timeout and a 64 KiB body limit. HTTP 200
 and a JSON content type are required. No logos, key URLs or other document links are fetched.
 Invalid or unavailable documents fail closed without returning their contents to the caller.

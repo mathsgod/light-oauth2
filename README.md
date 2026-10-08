@@ -7,6 +7,7 @@ OAuth 2.0 Authorization Code + S256 PKCE integration for Light, powered by Leagu
 - Authorization Code with mandatory S256 PKCE and state; exact registered redirect URI validation through League.
 - Public and confidential pre-registered clients, hashed confidential-client secrets.
 - Opt-in Client ID Metadata Documents (CIMD) for URL-based public clients without manual registration.
+- Opt-in RFC 7591 Dynamic Client Registration (DCR) for public PKCE clients at `/oauth/register`.
 - Access tokens, rotating refresh tokens, single-use codes and token revocation.
 - MySQL/MariaDB storage with transactional token exchange and row locks to serialize credential reuse.
 - Authorization-server and protected-resource metadata responses.
@@ -15,7 +16,7 @@ OAuth 2.0 Authorization Code + S256 PKCE integration for Light, powered by Leagu
 - Default Light login/2FA and consent pages, with customizable `AuthorizationFlow`.
 - Opt-in RFC 8693 access-token exchange with confidential-client authentication, explicit source/target allowlists and scope narrowing.
 
-This package does not supply Dynamic Client Registration (DCR), OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider authorizes one configured resource; optional token exchange can issue tokens for explicitly allowed downstream resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow.
+This package does not supply confidential-client DCR, RFC 7592 registration management, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider authorizes one configured resource; optional token exchange can issue tokens for explicitly allowed downstream resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow.
 
 ### Refresh token replay protection
 
@@ -58,7 +59,7 @@ Light GraphQL applications can set `OAUTH_API_RESOURCE` for the API token audien
 2. Apply `migrations/001_oauth.sql` through the application's migration runner.
 3. Create separate OAuth RSA keys outside the web root, and a random encryption key of at least 32 characters. Keep all keys out of source control. Use HTTPS outside loopback development.
 4. Configure the environment and use `ProviderFactory::registerFromEnvironment($app)` with the built-in login/consent flow, or construct `Config`, `PdoStore`, a permission provider and an `AuthorizationFlow` manually.
-5. Register database clients once; see `examples/register-client.php`. Store only `password_hash()` output for confidential-client secrets. Public URL clients can instead use opt-in [CIMD](docs/CIMD.md) without a database client record.
+5. Register database clients once; see `examples/register-client.php`. Store only `password_hash()` output for confidential-client secrets. Public clients can instead use opt-in [DCR](docs/DCR.md) for automatic registration, or [CIMD](docs/CIMD.md) without a database client record.
 6. Register the provider before running Light.
 
 Do not share the OAuth PDO connection with an already-open application transaction. The package does not apply migrations or provision database clients automatically.
@@ -69,6 +70,7 @@ Do not share the OAuth PDO connection with an already-open application transacti
 | --- | --- | --- |
 | GET / POST | `/oauth/authorize` | Validate OAuth parameters and delegate login/2FA/consent to the application |
 | POST | `/oauth/token` | Form-encoded authorization-code, refresh-token or opt-in RFC 8693 token exchange |
+| POST | `/oauth/register` | Opt-in public client registration (DCR); accepts JSON |
 | POST | `/oauth/revoke` | Revoke a client-owned access or refresh token |
 | GET | `/.well-known/oauth-authorization-server` | Authorization server discovery |
 
@@ -94,7 +96,7 @@ Use `$provider->validator()->validate($request)` to obtain a `TokenContext`; use
 
 `Config::resource` defines token audience, not the OAuth client ID. `client_id` is recorded separately. Authorization-code and refresh-token requests accept only this configured resource. With RFC 8693 enabled, token-exchange requests can select an explicitly allowed downstream resource. If the MCP server and GraphQL are distinct OAuth resources, use [token exchange](docs/TOKEN_EXCHANGE.md); do not forward a token addressed only to MCP into GraphQL.
 
-An MCP service must host its own protected-resource metadata and return the appropriate `WWW-Authenticate` resource metadata challenge. This PHP package does not update the Node MCP server. Codex can use a pre-registered client ID or, when enabled, [CIMD](docs/CIMD.md). For pre-registered clients, register the complete callback URL shown by Codex, including its path. League permits variable ports for HTTP loopback IP callbacks under RFC 8252; the host, path and query must still match. Other callbacks require exact matching. No wildcard redirect URIs are accepted.
+An MCP service must host its own protected-resource metadata and return the appropriate `WWW-Authenticate` resource metadata challenge. This PHP package does not update the Node MCP server. Codex can use a pre-registered client ID or, when enabled, [DCR](docs/DCR.md) or [CIMD](docs/CIMD.md). For pre-registered clients, register the complete callback URL shown by Codex, including its path. League permits variable ports for HTTP loopback IP callbacks under RFC 8252; the host, path and query must still match. Other callbacks require exact matching. No wildcard redirect URIs are accepted.
 
 ## Application bootstrap and authorization page
 
@@ -112,7 +114,7 @@ The factory is enabled by `OAUTH_ENABLED=true`. It reads `OAUTH_ISSUER`,
 `OAUTH_RESOURCE`, `OAUTH_PRIVATE_KEY_PATH`, `OAUTH_PUBLIC_KEY_PATH`,
 `OAUTH_ENCRYPTION_KEY` and comma-separated `OAUTH_SCOPES`, and uses the Light
 `DATABASE_*` settings with a dedicated PDO connection. Optional settings are
-`OAUTH_CIMD_ENABLED`, `OAUTH_API_RESOURCE`, `OAUTH_TOKEN_EXCHANGE_POLICY` and
+`OAUTH_CIMD_ENABLED`, `OAUTH_DCR_ENABLED`, `OAUTH_API_RESOURCE`, `OAUTH_TOKEN_EXCHANGE_POLICY` and
 `OAUTH_TOKEN_EXCHANGE_TTL`; see [.env.example](.env.example). The default browser flow
 reuses Light password and required 2FA checks, with explicit consent, one-time
 CSRF protection and CSP allowing the validated callback origin.
@@ -140,6 +142,17 @@ errors are not cached. CIMD does not add a DCR registration endpoint.
 
 For Codex, remove the pre-registered `client_id` override to allow CIMD selection.
 See [CIMD setup, metadata format, security and Codex login](docs/CIMD.md).
+
+## Dynamic Client Registration (DCR)
+
+Enable `OAUTH_DCR_ENABLED=true` through `ProviderFactory`, or `dcrEnabled: true` on
+`Config`, to expose `POST /oauth/register` and advertise `registration_endpoint`.
+DCR is off by default and requires a `ClientStore` such as `PdoStore`. It accepts JSON
+registration for public clients with explicit `token_endpoint_auth_method: none`,
+authorization-code/optional refresh grants, validated callbacks and exposed scopes.
+The server creates the database record and returns a random client ID with HTTP 201.
+PKCE and user login/consent remain mandatory. Apply application/proxy rate limits;
+the package does not automatically expire registrations. See [DCR setup and limits](docs/DCR.md).
 
 ## OAuth client management
 

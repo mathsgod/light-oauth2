@@ -17,6 +17,7 @@ final class ClientRepository implements ClientRepositoryInterface
     {
         $client = $this->getClientEntity($clientIdentifier);
         if (!$client || !in_array($grantType, ['authorization_code', 'refresh_token', \Light\OAuth2\Grant\TokenExchangeGrant::IDENTIFIER], true)) return false;
+        if (isset($client->record['grant_types']) && !in_array($grantType, $client->record['grant_types'], true)) return false;
         if ($grantType === \Light\OAuth2\Grant\TokenExchangeGrant::IDENTIFIER && !$client->isConfidential()) return false;
         return !$client->isConfidential() || ($clientSecret !== null && password_verify($clientSecret, $client->record['secret_hash'] ?? ''));
     }

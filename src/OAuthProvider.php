@@ -19,10 +19,15 @@ final class OAuthProvider
     private TokenValidator $apiValidator;
     private RefreshTokenRepository $refresh;
     private ClientMetadata\ClientResolver $clients;
+    private ?DynamicClientRegistrationEndpoint $registration = null;
     public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow, private ?TokenExchangePolicy $exchangePolicy = null, ?ClientMetadata\MetadataFetcher $metadataFetcher = null)
     {
         if ($config->cimdEnabled && $metadataFetcher === null && !extension_loaded('curl')) {
             throw new \LogicException('CIMD requires ext-curl');
+        }
+        if ($config->dcrEnabled) {
+            if (!$store instanceof Contract\ClientStore) throw new \LogicException('DCR requires a ClientStore with insert-only createClient support');
+            $this->registration = new DynamicClientRegistrationEndpoint($store, $permissions);
         }
         $clients = $this->clients = new ClientMetadata\ClientResolver($store, $permissions->scopes(),
             $config->cimdEnabled ? ($metadataFetcher ?? new ClientMetadata\HttpsMetadataFetcher()) : null);
@@ -42,6 +47,10 @@ final class OAuthProvider
             $this->server->enableGrantType(new Grant\TokenExchangeGrant($config, $store, $this->validator, $exchangePolicy), new \DateInterval($exchangePolicy->ttl));
         }
         $this->revocation = new RevocationEndpoint($config, $store, $this->validator, $clients);
+    }
+    public function registerClient(ServerRequestInterface $request): ResponseInterface
+    {
+        return $this->registration?->handle($request) ?? new JsonResponse(['error' => 'not_found'], 404, ['Cache-Control' => 'no-store']);
     }
     public function revoke(ServerRequestInterface $request): ResponseInterface { return $this->revocation->handle($request); }
     public function validator(): TokenValidator { return $this->validator; }
@@ -92,6 +101,7 @@ final class OAuthProvider
     public function metadata(ServerRequestInterface $request): ResponseInterface
     {
         return new JsonResponse([
+            ...($this->config->dcrEnabled ? ['registration_endpoint' => $this->config->endpoint('register')] : []),
             'issuer' => $this->config->issuer,
             'client_id_metadata_document_supported' => $this->config->cimdEnabled,
             'authorization_endpoint' => $this->config->endpoint('authorize'),
@@ -142,11 +152,12 @@ final class OAuthProvider
         $router->map('POST', $routePrefix . '/authorize', [$this, 'authorize']);
         $router->map('POST', $routePrefix . '/token', [$this, 'token']);
         $router->map('POST', $routePrefix . '/revoke', [$this, 'revoke']);
+        if ($this->registration !== null) $router->map('POST', $routePrefix . '/register', [$this, 'registerClient']);
         $router->map('GET', '/.well-known/oauth-authorization-server' . $issuerPath, [$this, 'metadata']);
         $app->setAuthServiceFactory(function (ServerRequestInterface $request) use ($loadUser, $routePrefix, $issuerPath) {
             $path = $request->getUri()->getPath();
             $anonymousRequest = $request->withoutHeader('Authorization')->withCookieParams([]);
-            if (in_array($path, [$routePrefix . '/token', $routePrefix . '/revoke', '/.well-known/oauth-authorization-server' . $issuerPath], true)) {
+            if (in_array($path, [$routePrefix . '/token', $routePrefix . '/revoke', ...($this->registration !== null ? [$routePrefix . '/register'] : []), '/.well-known/oauth-authorization-server' . $issuerPath], true)) {
                 return new \Light\Auth\Service($anonymousRequest);
             }
             if ($path === $routePrefix . '/authorize') {

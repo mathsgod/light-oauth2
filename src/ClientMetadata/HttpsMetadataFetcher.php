@@ -31,6 +31,15 @@ final class HttpsMetadataFetcher implements MetadataFetcher
             && !str_starts_with(bin2hex($packed), '2002') && !str_starts_with(bin2hex($packed), '20010000'));
     }
 
+    /** Only the chosen, validated address is pinned to the connection. */
+    public static function selectPublicAddress(array $addresses): string
+    {
+        foreach ($addresses as $ip) {
+            if (is_string($ip) && self::isPublicAddress($ip)) return $ip;
+        }
+        throw new \RuntimeException('CIMD requires public IP addresses');
+    }
+
     public function fetch(string $url): array
     {
         $parts = self::validateUrl($url);
@@ -44,10 +53,7 @@ final class HttpsMetadataFetcher implements MetadataFetcher
             }
         }
         if (!$addresses) throw new \RuntimeException('CIMD DNS lookup failed');
-        foreach ($addresses as $ip) {
-            if (!self::isPublicAddress($ip)) throw new \RuntimeException('CIMD requires public IP addresses');
-        }
-        $ip = $addresses[0];
+        $ip = self::selectPublicAddress($addresses);
         $port = $parts['port'] ?? 443;
         $body = '';
         $handle = curl_init($url);
