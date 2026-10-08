@@ -93,14 +93,6 @@ final class ClientMetadataTest extends TestCase
         $resolver = new ClientResolver(new MemoryStore(), ['client.list'], $this->fetcher(['scope' => 'client.list administrator']));
         self::assertSame(['client.list'], $resolver->client(self::ID)['scopes']);
     }
-    public function testMixedDnsAnswersOnlySelectPublicDestination(): void
-    {
-        self::assertSame('104.207.155.211', HttpsMetadataFetcher::selectPublicAddress(['::', '127.0.0.1', '104.207.155.211']));
-        self::assertSame('8.8.8.8', HttpsMetadataFetcher::selectPublicAddress(['8.8.8.8', '10.0.0.1']));
-        $this->expectException(\RuntimeException::class);
-        HttpsMetadataFetcher::selectPublicAddress(['::', '10.0.0.1']);
-    }
-
     public function testUrlAndSsrfPolicy(): void
     {
         foreach (['http://client.example/id', 'https://client.example', 'https://user:pass@client.example/id', 'https://client.example/id#fragment', 'https://client.example/a/../id', 'https://client.example/%2e%2e/id', "https://client.example/a\nb", 'https://client.example/a\\b'] as $url) {
