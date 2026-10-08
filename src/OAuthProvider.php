@@ -63,9 +63,13 @@ final class OAuthProvider
             if (($params['code_challenge_method'] ?? null) !== 'S256' || !is_string($params['code_challenge'] ?? null)) throw OAuthServerException::invalidRequest('code_challenge_method', 'S256 PKCE required');
             if (!is_string($params['state'] ?? null) || $params['state'] === '') throw OAuthServerException::invalidRequest('state');
             $authorization = $this->server->validateAuthorizationRequest($request);
+            $automatic = $this->config->autoSelectScopes && !array_key_exists('scope', $params)
+                ? new AutomaticScopes($this->permissions) : null;
+            if ($automatic !== null) $request = $request->withAttribute(AutomaticScopes::class, $automatic);
             $decision = $this->flow->resolve($request, $authorization);
             if ($decision instanceof ResponseInterface) return $this->noStore($decision);
             if (!$decision->authenticationComplete) throw OAuthServerException::accessDenied('Complete login and required second factor first');
+            if ($decision->approved && $automatic !== null) $automatic->assertSelected($authorization, $decision->userId);
             if ($decision->approved) $this->scopes->finalizeScopes($authorization->getScopes(), 'authorization_code', $authorization->getClient(), $decision->userId);
             $authorization->setUser(new User($decision->userId));
             $authorization->setAuthorizationApproved($decision->approved);

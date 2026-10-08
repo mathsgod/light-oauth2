@@ -38,7 +38,11 @@ final class OAuthTest extends TestCase
             public bool $complete = true;
             public bool $approve = true;
             public function resolve(ServerRequestInterface $request, AuthorizationRequest $authorization): AuthorizationDecision|ResponseInterface
-            { return new AuthorizationDecision('27', $this->approve, $this->complete); }
+            {
+                $automatic = $request->getAttribute(\Light\OAuth2\AutomaticScopes::class);
+                if ($automatic && $this->complete) $automatic->select($authorization, '27');
+                return new AuthorizationDecision('27', $this->approve, $this->complete);
+            }
         };
         $this->config = new Config('https://auth.example.com', 'https://api.example.com/', self::$privateKey, self::$publicKey, str_repeat('x', 32));
         $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
@@ -47,7 +51,78 @@ final class OAuthTest extends TestCase
     private function authorization(array $changes = []): ResponseInterface
     {
         $params = array_replace(['response_type' => 'code', 'client_id' => 'codex', 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'scope' => 'client.list', 'state' => 'random-test-state', 'code_challenge' => rtrim(strtr(base64_encode(hash('sha256', $this->verifier, true)), '+/', '-_'), '='), 'code_challenge_method' => 'S256', 'resource' => $this->config->resource], $changes);
+        if (array_key_exists('scope', $changes) && $changes['scope'] === null) unset($params['scope']);
         return $this->provider->authorize((new ServerRequest())->withQueryParams($params));
+    }
+    private function enableAutomaticScopes(): void
+    {
+        $this->config = new Config($this->config->issuer, $this->config->resource, self::$privateKey, self::$publicKey, str_repeat('x', 32), autoSelectScopes: true);
+        $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
+    }
+    public function testOmittedScopesSelectIntersectionAndIssueUsableToken(): void
+    {
+        $this->store->saveClient(['id' => 'codex', 'name' => 'Codex', 'redirect_uris' => ['http://127.0.0.1:5555/callback'], 'confidential' => false, 'enabled' => true, 'scopes' => ['client.list', 'client.edit', 'unknown']]);
+        $this->enableAutomaticScopes();
+        self::assertTrue($this->config->forResource('https://other.example.com')->autoSelectScopes);
+        $response = $this->authorization(['scope' => null]);
+        self::assertSame(302, $response->getStatusCode(), (string) $response->getBody());
+        parse_str(parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        $response = $this->exchange(['grant_type' => 'authorization_code', 'client_id' => 'codex', 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'code' => $query['code'], 'code_verifier' => $this->verifier]);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $tokens = json_decode((string) $response->getBody(), true);
+        self::assertSame(['client.list'], $this->provider->validator()->validate($this->request($tokens['access_token']))->scopes);
+    }
+    public function testAutomaticScopesRejectEmptyIntersection(): void
+    {
+        $this->enableAutomaticScopes();
+        $this->permissions->allowed = false;
+        $response = $this->authorization(['scope' => null]);
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame('invalid_scope', json_decode((string) $response->getBody(), true)['error']);
+    }
+    public function testExplicitScopesRemainStrictWithAutomaticSelection(): void
+    {
+        $this->enableAutomaticScopes();
+        self::assertSame(400, $this->authorization(['scope' => 'client.edit'])->getStatusCode());
+        self::assertSame(302, $this->authorization(['scope' => ''])->getStatusCode());
+    }
+    public function testAutomaticScopeFlowCannotApproveWithoutSelectingScopes(): void
+    {
+        $this->enableAutomaticScopes();
+        $flow = new class implements AuthorizationFlow {
+            public function resolve(ServerRequestInterface $request, AuthorizationRequest $authorization): AuthorizationDecision|ResponseInterface
+            { return new AuthorizationDecision('27', true, true); }
+        };
+        $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $flow);
+        self::assertSame(401, $this->authorization(['scope' => null])->getStatusCode());
+    }
+    public function testOmittedScopesRemainEmptyByDefault(): void
+    {
+        $response = $this->authorization(['scope' => null]);
+        self::assertSame(302, $response->getStatusCode());
+        parse_str(parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        $response = $this->exchange(['grant_type' => 'authorization_code', 'client_id' => 'codex', 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'code' => $query['code'], 'code_verifier' => $this->verifier]);
+        self::assertSame(200, $response->getStatusCode());
+        $tokens = json_decode((string) $response->getBody(), true);
+        self::assertSame([], $this->provider->validator()->validate($this->request($tokens['access_token']))->scopes);
+    }
+    public function testAutomaticSelectionUsesResolvedCimdClientScopes(): void
+    {
+        $id = 'https://client.example.com/automatic.json';
+        $config = new Config($this->config->issuer, $this->config->resource, self::$privateKey, self::$publicKey, str_repeat('x', 32), cimdEnabled: true, autoSelectScopes: true);
+        $fetcher = new class implements \Light\OAuth2\ClientMetadata\MetadataFetcher {
+            public function fetch(string $url): array {
+                return ['client_id' => $url, 'client_name' => 'Automatic client', 'redirect_uris' => ['http://127.0.0.1/callback'], 'token_endpoint_auth_method' => 'none', 'scope' => 'client.list client.edit'];
+            }
+        };
+        $this->provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow, metadataFetcher: $fetcher);
+        $response = $this->authorization(['client_id' => $id, 'scope' => null]);
+        self::assertSame(302, $response->getStatusCode(), (string) $response->getBody());
+        parse_str(parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        $response = $this->exchange(['grant_type' => 'authorization_code', 'client_id' => $id, 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'code' => $query['code'], 'code_verifier' => $this->verifier]);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $tokens = json_decode((string) $response->getBody(), true);
+        self::assertSame(['client.list'], $this->provider->validator()->validate($this->request($tokens['access_token']))->scopes);
     }
     private function code(): string
     {

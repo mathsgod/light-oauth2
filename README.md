@@ -90,6 +90,33 @@ The default `BrowserAuthorizationFlow` provides password/2FA login followed by a
 
 The package trusts this application contract; the decision boolean is not itself proof of 2FA. OAuth code generation rechecks client/user scopes, and token exchange/refresh rechecks them again. Login failure, incomplete 2FA and denied consent do not create codes.
 
+### Automatically select scopes when omitted (1.0.4)
+
+Enable this behavior in the application's environment:
+
+```dotenv
+OAUTH_AUTO_SELECT_SCOPES=true
+OAUTH_SCOPES=client.list,quotation.list
+```
+
+`ProviderFactory` reads the setting automatically. For manual setup, pass `autoSelectScopes: true` to `Config`. The default is `false` for compatibility. `OAUTH_SCOPES` remains an allowlist; it does not grant permissions to users or clients.
+
+Only an authorization request **without a `scope` parameter** selects scopes automatically. Clients can omit `scope` from `/oauth/authorize`; they must still supply the usual client, redirect URI, state, and S256 PKCE parameters. After authentication, the server selects the intersection of the provider's scope allowlist (`OAUTH_SCOPES`), the resolved client's allowed scopes (including CIMD/DCR clients), and the user's current permissions. An empty intersection returns `invalid_scope`. Explicit scopes keep the existing strict validation; an explicitly empty `scope` does not enable automatic selection.
+
+The built-in browser flow displays the selected scopes for consent, binds them to the pending browser session, and requires a new consent page if the selection changes before approval. Token issuance, refresh, and exchange still perform their normal permission checks.
+
+Custom `AuthorizationFlow` implementations must support this opt-in before enabling it. Once the user has completed authentication and required second factors, select scopes before displaying consent:
+
+```php
+$automatic = $request->getAttribute(\Light\OAuth2\AutomaticScopes::class);
+if ($automatic instanceof \Light\OAuth2\AutomaticScopes) {
+    $automatic->select($authorization, $userId);
+}
+// Render $authorization->getScopes() and bind their identifiers to consent.
+```
+
+Repeat selection on the consent POST, validate CSRF and the authenticated session, and redisplay consent if the selected scope identifiers differ from those shown. Return an approved `AuthorizationDecision` only after this check. The provider rejects automatic-scope approval if the flow has not selected scopes for that user. This request-local helper is supplied only when automatic selection is enabled and `scope` was omitted.
+
 ## Resource authentication and MCP
 
 Use `$provider->validator()->validate($request)` to obtain a `TokenContext`; use `$context->can($right, $permissions)` before exposing protected data. A successful JWT validation alone does not authorize an operation.

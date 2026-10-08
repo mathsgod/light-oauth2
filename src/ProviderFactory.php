@@ -29,6 +29,7 @@ final class ProviderFactory
             apiResource: self::optional('OAUTH_API_RESOURCE'),
             cimdEnabled: filter_var($_ENV['OAUTH_CIMD_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN),
             dcrEnabled: filter_var($_ENV['OAUTH_DCR_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            autoSelectScopes: filter_var($_ENV['OAUTH_AUTO_SELECT_SCOPES'] ?? false, FILTER_VALIDATE_BOOLEAN),
         );
         $exchangePolicy ??= TokenExchangePolicy::fromEnvironment($_ENV);
         $scopes = array_values(array_unique(array_filter(array_map('trim', explode(',', $_ENV['OAUTH_SCOPES'] ?? 'user.list')))));

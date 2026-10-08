@@ -77,7 +77,14 @@ final class BrowserAuthorizationFlow implements AuthorizationFlow
                 return $this->loginPage($request, $authorization, $entry['csrf']);
             }
 
+            $automatic = $request->getAttribute(AutomaticScopes::class);
+            if ($automatic instanceof AutomaticScopes) $automatic->select($authorization, (string) $user->user_id);
+            $scopeIds = array_map(fn($scope) => $scope->getIdentifier(), $authorization->getScopes());
+
             if ($request->getMethod() === 'POST') {
+                if ($automatic instanceof AutomaticScopes && ($entry['consent_scopes'] ?? null) !== $scopeIds) {
+                    return new RedirectResponse($this->action($request), 303);
+                }
                 if (!in_array($body['action'] ?? '', ['approve', 'deny'], true)
                     || ($entry['session_id'] ?? null) !== $auth->getSessionId()) {
                     return $this->page('Authorization expired', '<p>Please restart authorization.</p>', 403);
@@ -87,6 +94,7 @@ final class BrowserAuthorizationFlow implements AuthorizationFlow
             }
 
             $entry['session_id'] = $auth->getSessionId();
+            $entry['consent_scopes'] = $scopeIds;
             $redirectUri = $authorization->getRedirectUri() ?? $authorization->getClient()->getRedirectUri();
             if (is_array($redirectUri)) $redirectUri = $redirectUri[0] ?? null;
             $scopes = implode('', array_map(fn($scope) => '<li>' . self::escape($scope->getIdentifier()) . '</li>', $authorization->getScopes()));

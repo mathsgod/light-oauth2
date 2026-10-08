@@ -16,6 +16,7 @@ final readonly class Config
         public ?string $apiResource = null,
         public bool $cimdEnabled = false,
         public bool $dcrEnabled = false,
+        public bool $autoSelectScopes = false,
     ) {
         foreach ($apiResource === null ? [$issuer, $resource] : [$issuer, $resource, $apiResource] as $url) {
             $parts = parse_url($url);
@@ -35,6 +36,6 @@ final readonly class Config
     /** Keep issuer/keys/settings while selecting the audience validated by a resource server. */
     public function forResource(string $resource): self
     {
-        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled);
+        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled, $this->autoSelectScopes);
     }
 }
