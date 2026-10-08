@@ -24,7 +24,28 @@ $provider->register($app, $loadActiveUser);
 
 The rule's `source` must exactly match this provider's configured resource. No policy is enabled by default. An authenticated confidential client without a matching rule receives `unauthorized_client`. The normal authorization-code and refresh-token flows retain their existing audience and behavior.
 
-For the environment factory, pass the policy explicitly:
+For a Light GraphQL application, set `Config::apiResource` to the API audience. The provider's built-in `register()` then validates application OAuth credentials against that audience and installs `OAuthService` with the existing per-operation permission checks. Its `validator()` remains bound to `Config::resource` for MCP validation. You do not need an application-specific auth factory override.
+
+The environment factory supports the complete setup from trusted environment settings:
+
+```dotenv
+OAUTH_ENABLED=true
+OAUTH_RESOURCE=https://mcp.example.com
+OAUTH_API_RESOURCE=https://api.example.com/graphql
+OAUTH_SCOPES=client.list
+OAUTH_TOKEN_EXCHANGE_POLICY='{"hostlink-mcp":{"source":"https://mcp.example.com","targets":{"https://api.example.com/graphql":["client.list"]}}}'
+OAUTH_TOKEN_EXCHANGE_TTL=PT5M
+```
+
+Keep the existing issuer, key-path, encryption-key and database settings too. Load `.env` into `$_ENV` before constructing the application. The entry point can then use only:
+
+```php
+$app = new Light\App();
+Light\OAuth2\ProviderFactory::registerFromEnvironment($app);
+$app->run();
+```
+
+Malformed policy JSON fails configuration instead of enabling unrestricted exchange. With no policy setting, exchange stays disabled. An explicitly supplied policy object takes precedence over the environment policy:
 
 ```php
 Light\OAuth2\ProviderFactory::registerFromEnvironment($app, exchangePolicy: $policy);
@@ -81,9 +102,11 @@ if (!$context->can('client.list', $permissions)) {
 // business operation with that user's normal data restrictions.
 ```
 
-The API needs the same trusted issuer/public key and access to the issuance/revocation store; this profile is not validation of arbitrary third-party JWTs. The validator returns an identity and scopes, not an automatic authorization to every GraphQL field. Configure your GraphQL authentication adapter to use this API validator and enforce each resolver's permission, for example with `OAuthService` and `#[Right('client.list')]`. Do not call `register()` twice to install two providers on the same application's token routes. Existing application overrides of Light's auth factory may require changes.
+The API needs the same trusted issuer/public key and access to the issuance/revocation store; this profile is not validation of arbitrary third-party JWTs. The validator returns an identity and scopes, not an automatic authorization to every GraphQL field. In a Light application, configure `apiResource` / `OAUTH_API_RESOURCE` and let the provider install `OAuthService`; existing resolver attributes such as `#[Right('client.list')]` enforce scopes and current user rights. The manual validator example above is for other integrations.
 
-The MCP validator rejects API-audience tokens, and the API validator rejects the original MCP-audience token. This package change does not automatically update an application's MCP client requests or GraphQL authentication factory.
+Do not call `register()` twice to install two providers on the same application's token routes, and do not subsequently replace its auth factory with an application-specific factory that only understands native tokens. When `apiResource` is omitted, the provider retains its previous behavior of accepting its primary resource's OAuth tokens for application authentication. Native Light credentials retain their existing authentication path.
+
+With distinct MCP and API resources configured, the MCP validator rejects API-audience tokens and the application's API validator rejects the original MCP-audience token. The MCP service still needs to perform token exchange before it calls GraphQL; configuring API authentication does not implement those outgoing MCP requests.
 
 ## Supported profile and policy
 

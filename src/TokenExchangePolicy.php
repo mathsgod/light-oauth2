@@ -37,6 +37,23 @@ final readonly class TokenExchangePolicy
         }
     }
 
+    /** Read trusted application settings; callers may still supply a policy object explicitly. */
+    public static function fromEnvironment(array $environment): ?self
+    {
+        $json = $environment['OAUTH_TOKEN_EXCHANGE_POLICY'] ?? null;
+        if ($json === null || $json === '') return null;
+        if (!is_string($json)) throw new \InvalidArgumentException('OAUTH_TOKEN_EXCHANGE_POLICY must be a JSON object');
+        try {
+            $clients = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $error) {
+            throw new \InvalidArgumentException('Invalid OAUTH_TOKEN_EXCHANGE_POLICY JSON', 0, $error);
+        }
+        if (!str_starts_with(ltrim($json), '{') || !is_array($clients)) throw new \InvalidArgumentException('OAUTH_TOKEN_EXCHANGE_POLICY must be a JSON object');
+        $ttl = $environment['OAUTH_TOKEN_EXCHANGE_TTL'] ?? 'PT5M';
+        if (!is_string($ttl)) throw new \InvalidArgumentException('OAUTH_TOKEN_EXCHANGE_TTL must be an ISO 8601 duration');
+        return new self($clients, $ttl);
+    }
+
     /** @return array{resource: string, scopes: list<string>} */
     public function target(string $clientId, string $source, ?string $resource, ?string $audience): array
     {

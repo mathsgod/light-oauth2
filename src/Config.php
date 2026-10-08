@@ -13,12 +13,14 @@ final readonly class Config
         public string $accessTokenTtl = 'PT1H',
         public string $refreshTokenTtl = 'P30D',
         public string $codeTtl = 'PT5M',
+        public ?string $apiResource = null,
+        public bool $cimdEnabled = false,
     ) {
-        foreach ([$issuer, $resource] as $url) {
+        foreach ($apiResource === null ? [$issuer, $resource] : [$issuer, $resource, $apiResource] as $url) {
             $parts = parse_url($url);
             if (!$parts || empty($parts['host']) || isset($parts['fragment']) || isset($parts['query']) || isset($parts['user']) ||
                 (($parts['scheme'] ?? '') !== 'https' && !(($parts['scheme'] ?? '') === 'http' && in_array($parts['host'], ['localhost', '127.0.0.1', '[::1]'], true)))) {
-                throw new \InvalidArgumentException('Issuer and resource must be HTTPS URLs (HTTP loopback allowed)');
+                throw new \InvalidArgumentException('Issuer and resources must be HTTPS URLs (HTTP loopback allowed)');
             }
         }
         if (strlen($encryptionKey) < 32) throw new \InvalidArgumentException('Encryption key must be at least 32 characters');
@@ -32,6 +34,6 @@ final readonly class Config
     /** Keep issuer/keys/settings while selecting the audience validated by a resource server. */
     public function forResource(string $resource): self
     {
-        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl);
+        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled);
     }
 }

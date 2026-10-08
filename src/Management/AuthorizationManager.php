@@ -6,7 +6,7 @@ use Light\OAuth2\Type\OAuthAuthorization;
 
 final class AuthorizationManager
 {
-    public function __construct(private AuthorizationStore $store) {}
+    public function __construct(private AuthorizationStore $store, private ?\Light\OAuth2\ClientMetadata\ClientResolver $clients = null) {}
 
     /** @return OAuthAuthorization[] */
     public function authorizations(string $userId): array
@@ -23,7 +23,7 @@ final class AuthorizationManager
             $source = $credential['type'] === 'refresh_token' ? ($access[$record['access_token_id']] ?? null) : $record;
             if (!$source || !is_string($source['client_id'] ?? null)) continue;
             $id = $source['client_id'];
-            if (!isset($groups[$id])) $groups[$id] = new OAuthAuthorization($id, $this->store->client($id));
+            if (!isset($groups[$id])) $groups[$id] = new OAuthAuthorization($id, $this->clients ? $this->clients->client($id) : $this->store->client($id));
             $group = $groups[$id];
             $field = ['access_token' => 'accessTokens', 'refresh_token' => 'refreshTokens', 'auth_code' => 'authorizationCodes'][$credential['type']];
             $group->$field++;

@@ -89,6 +89,35 @@ final class TokenExchangeTest extends TestCase
         self::assertSame('no-store', $response->getHeaderLine('Cache-Control'));
     }
 
+    public function testCimdSubjectCanBeExchangedAndValidatedForApiAudience(): void
+    {
+        $id = 'https://client.example.com/codex/client.json';
+        $config = new Config($this->config->issuer, self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), cimdEnabled: true);
+        $fetcher = new class implements \Light\OAuth2\ClientMetadata\MetadataFetcher {
+            public function fetch(string $url): array { return ['client_id' => $url, 'redirect_uris' => ['http://127.0.0.1/callback'], 'scope' => 'client.list']; }
+        };
+        $clients = new \Light\OAuth2\ClientMetadata\ClientResolver($this->store, $this->permissions->scopes(), $fetcher);
+        $repo = new AccessTokenRepository($this->store, $config, $clients);
+        $token = $repo->getNewToken(new Client($clients->client($id)), [new Scope('client.list')], '27');
+        $token->setIdentifier(bin2hex(random_bytes(20)));
+        $token->setExpiryDateTime(new \DateTimeImmutable('+1 hour'));
+        $token->setPrivateKey(new CryptKey($config->privateKey));
+        $repo->persistNewAccessToken($token);
+        $this->subject = $token->toString();
+        $this->provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow, $this->policy(), $fetcher);
+        $response = $this->exchange();
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $validator = new TokenValidator($config->forResource(self::API), $this->store, $clients);
+        $access = $this->body($response)['access_token'];
+        self::assertSame('27', $validator->validate($this->bearer($access))->userId);
+        // Disabling the URL client locally also invalidates its exchanged descendants.
+        $record = $clients->client($id);
+        $record['enabled'] = false;
+        $this->store->saveClient($record);
+        $this->expectException(OAuthServerException::class);
+        $validator->validate($this->bearer($access));
+    }
+
     public function testExchangePreservesUserAndBindsTokenToApi(): void
     {
         $response = $this->exchange();
@@ -355,5 +384,72 @@ final class TokenExchangeTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         new TokenExchangePolicy($rules);
+    }
+
+    /** Register the real provider/auth factory without management controllers or a database. */
+    private function registeredApp(?string $apiResource): array
+    {
+        if (!method_exists(\Light\App::class, 'createAuthService')) self::markTestSkipped('Light OAuth extension points are required');
+        $config = new Config($this->config->issuer, self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: $apiResource);
+        $store = $this->createStub(\Light\OAuth2\Contract\RefreshTokenStore::class);
+        foreach (['client', 'saveClient', 'record', 'insert', 'revoke', 'transaction', 'consumeRefreshToken', 'revokeRefreshTokenFamily'] as $method) {
+            $store->method($method)->willReturnCallback(fn(...$args) => $this->store->$method(...$args));
+        }
+        $provider = new OAuthProvider($config, $store, $this->permissions, $this->flow, $this->policy());
+        $app = (new \ReflectionClass(\Light\App::class))->newInstanceWithoutConstructor();
+        (new \ReflectionProperty(\Light\App::class, 'cache'))->setValue($app, $this->createStub(\Psr\SimpleCache\CacheInterface::class));
+        $server = $this->createStub(\Light\Server::class);
+        $server->method('getRouter')->willReturn(new \League\Route\Router());
+        (new \ReflectionProperty(\Light\App::class, 'server'))->setValue($app, $server);
+        $user = (new \ReflectionClass(\Light\Model\User::class))->newInstanceWithoutConstructor();
+        $provider->register($app, static fn(string $id) => $id === '27' ? $user : null);
+        return [$app, $provider, $user];
+    }
+
+    public function testBuiltInAuthFactoryAcceptsApiTokenAndRejectsMcpToken(): void
+    {
+        [$app, $provider, $user] = $this->registeredApp(self::API);
+        $response = $provider->token((new ServerRequest())->withParsedBody($this->params()));
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $token = $this->body($response)['access_token'];
+        $request = $this->bearer($token)->withUri(new \Laminas\Diactoros\Uri(self::API));
+        $auth = $app->createAuthService($request);
+        self::assertInstanceOf(\Light\OAuth2\Auth\OAuthService::class, $auth);
+        self::assertSame($user, $auth->getUser());
+        self::assertTrue($auth->isAllowed('client.list'));
+        self::assertFalse($auth->isAllowed('client.edit'));
+        $denied = $app->createAuthService($request->withHeader('Authorization', 'Bearer ' . $this->subject)->withCookieParams(['access_token' => 'native-cookie']));
+        self::assertInstanceOf(\Light\OAuth2\Auth\OAuthService::class, $denied);
+        self::assertFalse($denied->isLogged());
+        self::assertFalse($denied->isAllowed('client.list'));
+        // Source-token validation for MCP remains bound to the MCP resource.
+        self::assertSame('27', $provider->validator()->validate($this->bearer($this->subject))->userId);
+    }
+
+    public function testBuiltInAuthFactoryRejectsRevokedAndForgedApiTokens(): void
+    {
+        [$app, $provider] = $this->registeredApp(self::API);
+        $token = $this->body($provider->token((new ServerRequest())->withParsedBody($this->params())))['access_token'];
+        $parts = explode('.', $token);
+        $parts[2][0] = $parts[2][0] === 'A' ? 'B' : 'A';
+        $request = $this->bearer(implode('.', $parts))->withUri(new \Laminas\Diactoros\Uri(self::API));
+        self::assertFalse($app->createAuthService($request)->isLogged());
+        $this->store->revoke('access_token', $this->subjectId);
+        self::assertFalse($app->createAuthService($request->withHeader('Authorization', 'Bearer ' . $token))->isLogged());
+    }
+
+    public function testBuiltInAuthFactoryKeepsLegacyBehaviorWhenApiResourceIsUnset(): void
+    {
+        [$app, , $user] = $this->registeredApp(null);
+        self::assertSame($user, $app->createAuthService($this->bearer($this->subject))->getUser());
+        $anonymous = $app->createAuthService(new ServerRequest());
+        self::assertSame(\Light\Auth\Service::class, $anonymous::class);
+        self::assertFalse($anonymous->isLogged());
+    }
+
+    public function testApiResourceConfigurationRejectsUnsafeUrls(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new Config($this->config->issuer, self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: 'http://api.example.com/graphql');
     }
 }

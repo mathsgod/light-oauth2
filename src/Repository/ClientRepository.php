@@ -7,10 +7,10 @@ use Light\OAuth2\Contract\Store;
 use Light\OAuth2\Entity\Client;
 final class ClientRepository implements ClientRepositoryInterface
 {
-    public function __construct(private Store $store) {}
+    public function __construct(private Store $store, private ?\Light\OAuth2\ClientMetadata\ClientResolver $clients = null) {}
     public function getClientEntity(string $clientIdentifier): ?ClientEntityInterface
     {
-        $record = $this->store->client($clientIdentifier);
+        $record = $this->clients ? $this->clients->client($clientIdentifier) : $this->store->client($clientIdentifier);
         return $record && !empty($record['enabled']) ? new Client($record) : null;
     }
     public function validateClient(string $clientIdentifier, ?string $clientSecret, ?string $grantType): bool

@@ -16,11 +16,18 @@ final class OAuthProvider
     private ScopeRepository $scopes;
     private RevocationEndpoint $revocation;
     private TokenValidator $validator;
+    private TokenValidator $apiValidator;
     private RefreshTokenRepository $refresh;
-    public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow, private ?TokenExchangePolicy $exchangePolicy = null)
+    private ClientMetadata\ClientResolver $clients;
+    public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow, private ?TokenExchangePolicy $exchangePolicy = null, ?ClientMetadata\MetadataFetcher $metadataFetcher = null)
     {
+        if ($config->cimdEnabled && $metadataFetcher === null && !extension_loaded('curl')) {
+            throw new \LogicException('CIMD requires ext-curl');
+        }
+        $clients = $this->clients = new ClientMetadata\ClientResolver($store, $permissions->scopes(),
+            $config->cimdEnabled ? ($metadataFetcher ?? new ClientMetadata\HttpsMetadataFetcher()) : null);
         $this->scopes = new ScopeRepository($permissions);
-        $this->server = new AuthorizationServer(new ClientRepository($store), new AccessTokenRepository($store, $config), $this->scopes, $config->privateKey, $config->encryptionKey, new Response\TokenResponse());
+        $this->server = new AuthorizationServer(new ClientRepository($store, $clients), new AccessTokenRepository($store, $config, $clients), $this->scopes, $config->privateKey, $config->encryptionKey, new Response\TokenResponse());
         if (!$store instanceof Contract\RefreshTokenStore) throw new \LogicException('OAuth stores must implement RefreshTokenStore for refresh replay protection');
         $refresh = $this->refresh = new RefreshTokenRepository($store);
         $grant = new AuthCodeGrant(new AuthCodeRepository($store), $refresh, new \DateInterval($config->codeTtl));
@@ -29,11 +36,12 @@ final class OAuthProvider
         $grant = new RefreshTokenGrant($refresh);
         $grant->setRefreshTokenTTL(new \DateInterval($config->refreshTokenTtl));
         $this->server->enableGrantType($grant, new \DateInterval($config->accessTokenTtl));
-        $this->validator = new TokenValidator($config, $store);
+        $this->validator = new TokenValidator($config, $store, $clients);
+        $this->apiValidator = $config->apiResource === null ? $this->validator : new TokenValidator($config->forResource($config->apiResource), $store, $clients);
         if ($exchangePolicy !== null) {
             $this->server->enableGrantType(new Grant\TokenExchangeGrant($config, $store, $this->validator, $exchangePolicy), new \DateInterval($exchangePolicy->ttl));
         }
-        $this->revocation = new RevocationEndpoint($config, $store, $this->validator);
+        $this->revocation = new RevocationEndpoint($config, $store, $this->validator, $clients);
     }
     public function revoke(ServerRequestInterface $request): ResponseInterface { return $this->revocation->handle($request); }
     public function validator(): TokenValidator { return $this->validator; }
@@ -85,6 +93,7 @@ final class OAuthProvider
     {
         return new JsonResponse([
             'issuer' => $this->config->issuer,
+            'client_id_metadata_document_supported' => $this->config->cimdEnabled,
             'authorization_endpoint' => $this->config->endpoint('authorize'),
             'token_endpoint' => $this->config->endpoint('token'),
             'revocation_endpoint' => $this->config->endpoint('revoke'),
@@ -121,7 +130,7 @@ final class OAuthProvider
             ]]);
         }
         if ($this->store instanceof Contract\AuthorizationStore) {
-            $manager = new Management\AuthorizationManager($this->store);
+            $manager = new Management\AuthorizationManager($this->store, $this->clients);
             $app->getContainer()->add(Controller\OAuthAuthorizationController::class, new Controller\OAuthAuthorizationController($manager));
             $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Controller');
             $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');
@@ -153,7 +162,7 @@ final class OAuthProvider
             $payload = json_decode(base64_decode(strtr($matches[2], '-_', '+/')), true);
             $id = is_array($payload) ? ($payload['jti'] ?? null) : null;
             if (!is_string($id) || !$this->store->record('access_token', $id)) return new \Light\Auth\Service($request);
-            try { $context = $this->validator->validate($request); }
+            try { $context = $this->apiValidator->validate($request); }
             catch (OAuthServerException) { return new Auth\OAuthService($request, null, $this->permissions, $loadUser); }
             return new Auth\OAuthService($request, $context, $this->permissions, $loadUser);
         });

@@ -51,6 +51,8 @@ The user loader must return an active `Light\Model\User` or null. `LightPermissi
 
 For service-to-service access on behalf of a user (including MCP to GraphQL), see [access-token exchange](docs/TOKEN_EXCHANGE.md).
 
+Light GraphQL applications can set `OAUTH_API_RESOURCE` for the API token audience and `OAUTH_TOKEN_EXCHANGE_POLICY` for the exchange allowlist. `ProviderFactory::registerFromEnvironment($app)` installs the built-in token validation and scope-aware authentication; no application auth factory override is needed.
+
 1. `composer install`.
 2. Apply `migrations/001_oauth.sql` through the application's migration runner.
 3. Create separate OAuth RSA keys outside the web root, and a random encryption key of at least 32 characters. Keep all keys out of source control. Use HTTPS outside loopback development.
@@ -185,3 +187,9 @@ Tests also cover PKCE, code replay, refresh-family isolation, failed-exchange ro
 legacy token rotation, expiry versus reuse, scope escalation, revocation, client binding,
 resource audience, permissions, 2FA, consent, metadata and Light integration. Load testing
 has not been run.
+
+## URL-based public clients (CIMD)
+
+Opt in with `OAUTH_CIMD_ENABLED=true` through `ProviderFactory`, or `cimdEnabled: true`
+when constructing `Config`. CIMD resolves public clients from validated HTTPS metadata
+without manual database registration. See [CIMD setup, security and Codex login](docs/CIMD.md).

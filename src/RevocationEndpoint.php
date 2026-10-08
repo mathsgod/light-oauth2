@@ -11,7 +11,7 @@ use Defuse\Crypto\Crypto;
 use Defuse\Crypto\Exception\WrongKeyOrModifiedCiphertextException;
 final class RevocationEndpoint
 {
-    public function __construct(private Config $config, private Store $store, private TokenValidator $validator) {}
+    public function __construct(private Config $config, private Store $store, private TokenValidator $validator, private ?ClientMetadata\ClientResolver $clients = null) {}
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
         try {
@@ -25,7 +25,7 @@ final class RevocationEndpoint
                     [$clientId, $secret] = array_map('urldecode', explode(':', $decoded, 2));
                 }
             }
-            if (!is_string($clientId) || ($secret !== null && !is_string($secret)) || !(new ClientRepository($this->store))->validateClient($clientId, $secret, 'authorization_code')) throw OAuthServerException::invalidClient($request);
+            if (!is_string($clientId) || ($secret !== null && !is_string($secret)) || !(new ClientRepository($this->store, $this->clients))->validateClient($clientId, $secret, 'authorization_code')) throw OAuthServerException::invalidClient($request);
             $token = $params['token'];
             // Unknown, expired and already revoked tokens still return HTTP 200.
             if (substr_count($token, '.') === 2) {
@@ -57,7 +57,7 @@ final class RevocationEndpoint
         $id = is_array($payload) ? ($payload['jti'] ?? null) : null;
         $record = is_string($id) ? $this->store->record('access_token', $id) : null;
         if ($record && isset($record['exchange_subject'], $record['resource'])) {
-            return new TokenValidator($this->config->forResource($record['resource']), $this->store);
+            return new TokenValidator($this->config->forResource($record['resource']), $this->store, $this->clients);
         }
         return $this->validator;
     }

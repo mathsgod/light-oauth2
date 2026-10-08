@@ -14,10 +14,14 @@ final class TokenValidator
 {
     private ResourceServer $server;
     private CryptKey $key;
-    public function __construct(private Config $config, private Store $store)
+    public function __construct(private Config $config, private Store $store, private ?\Light\OAuth2\ClientMetadata\ClientResolver $clients = null)
     {
         $this->key = new CryptKey($config->publicKey);
-        $this->server = new ResourceServer(new AccessTokenRepository($store, $config), $this->key);
+        $this->server = new ResourceServer(new AccessTokenRepository($store, $config, $clients), $this->key);
+    }
+    private function client(string $id): ?array
+    {
+        return $this->clients ? $this->clients->client($id) : $this->store->client($id);
     }
     public function validate(ServerRequestInterface $request): TokenContext
     {
@@ -31,13 +35,13 @@ final class TokenValidator
         if (!$jwt->validator()->validate($token, new IssuedBy($this->config->issuer), new PermittedFor($this->config->resource))) {
             throw OAuthServerException::accessDenied('Invalid issuer or resource audience');
         }
-        $client = $this->store->client($record['client_id']);
+        $client = $this->client($record['client_id']);
         if (!$client || !$client['enabled']) throw OAuthServerException::accessDenied('Client disabled');
         if (isset($record['resource']) && $record['resource'] !== $this->config->resource) throw OAuthServerException::accessDenied('Invalid stored resource');
         $scopes = array_intersect($record['scopes'], $client['scopes']);
         if (isset($record['exchange_subject'])) {
             $subject = $this->store->record('access_token', $record['exchange_subject']);
-            $sourceClient = $subject ? $this->store->client($subject['client_id']) : null;
+            $sourceClient = $subject ? $this->client($subject['client_id']) : null;
             if (!$subject || !$sourceClient || empty($sourceClient['enabled'])) throw OAuthServerException::accessDenied('Invalid exchange source');
             $scopes = array_intersect($scopes, $subject['scopes'], $sourceClient['scopes']);
         }

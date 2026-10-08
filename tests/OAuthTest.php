@@ -69,6 +69,46 @@ final class OAuthTest extends TestCase
         return json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
     }
     private function request(string $token): ServerRequestInterface { return (new ServerRequest())->withHeader('Authorization', 'Bearer ' . $token); }
+    public function testCimdAuthorizationTokenRefreshValidationAndRevocation(): void
+    {
+        $id = 'https://client.example.com/codex/client.json';
+        $config = new Config($this->config->issuer, $this->config->resource, self::$privateKey, self::$publicKey, str_repeat('x', 32), cimdEnabled: true);
+        $fetcher = new class implements \Light\OAuth2\ClientMetadata\MetadataFetcher {
+            public function fetch(string $url): array {
+                return ['client_id' => $url, 'client_name' => 'Codex', 'redirect_uris' => ['http://127.0.0.1/callback'], 'token_endpoint_auth_method' => 'none', 'scope' => 'client.list'];
+            }
+        };
+        $this->provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow, metadataFetcher: $fetcher);
+        $metadata = json_decode((string) $this->provider->metadata(new ServerRequest())->getBody(), true);
+        self::assertTrue($metadata['client_id_metadata_document_supported']);
+        $response = $this->authorization(['client_id' => $id]);
+        self::assertSame(302, $response->getStatusCode(), (string) $response->getBody());
+        parse_str(parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        $response = $this->exchange(['grant_type' => 'authorization_code', 'client_id' => $id, 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'code' => $query['code'], 'code_verifier' => $this->verifier]);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $tokens = json_decode((string) $response->getBody(), true);
+        self::assertSame($id, $this->provider->validator()->validate($this->request($tokens['access_token']))->clientId);
+        $response = $this->exchange(['grant_type' => 'refresh_token', 'client_id' => $id, 'refresh_token' => $tokens['refresh_token']]);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $tokens = json_decode((string) $response->getBody(), true);
+        $response = $this->provider->revoke((new ServerRequest())->withMethod('POST')->withParsedBody(['client_id' => $id, 'token' => $tokens['access_token']]));
+        self::assertSame(200, $response->getStatusCode());
+        self::assertNull($this->store->client($id));
+        $this->expectException(OAuthServerException::class);
+        $this->provider->validator()->validate($this->request($tokens['access_token']));
+    }
+
+    public function testCimdCannotRedirectToUnlistedCallback(): void
+    {
+        $id = 'https://client.example.com/codex/client.json';
+        $config = new Config($this->config->issuer, $this->config->resource, self::$privateKey, self::$publicKey, str_repeat('x', 32), cimdEnabled: true);
+        $fetcher = new class implements \Light\OAuth2\ClientMetadata\MetadataFetcher {
+            public function fetch(string $url): array { return ['client_id' => $url, 'redirect_uris' => ['http://127.0.0.1/callback/expected']]; }
+        };
+        $this->provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow, metadataFetcher: $fetcher);
+        self::assertSame(401, $this->authorization(['client_id' => $id])->getStatusCode());
+    }
+
     public function testPkceExchangeResourceValidationAndLivePermission(): void
     {
         $tokens = $this->tokens();
