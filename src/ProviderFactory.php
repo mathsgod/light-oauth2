@@ -30,6 +30,7 @@ final class ProviderFactory
             cimdEnabled: filter_var($_ENV['OAUTH_CIMD_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN),
             dcrEnabled: filter_var($_ENV['OAUTH_DCR_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN),
             autoSelectScopes: filter_var($_ENV['OAUTH_AUTO_SELECT_SCOPES'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            authorizationUiUrl: self::optional('OAUTH_AUTHORIZATION_UI_URL'),
         );
         $exchangePolicy ??= TokenExchangePolicy::fromEnvironment($_ENV);
         $scopes = array_values(array_unique(array_filter(array_map('trim', explode(',', $_ENV['OAUTH_SCOPES'] ?? 'user.list')))));
@@ -37,7 +38,7 @@ final class ProviderFactory
             $config,
             new PdoStore(self::connection()),
             new LightPermissionProvider($app, $scopes),
-            $flow ?? new BrowserAuthorizationFlow($app),
+            $flow ?? ($config->authorizationUiUrl !== null ? new FrontendAuthorizationFlow(new BrowserAuthorizationFlow($app), $config) : new BrowserAuthorizationFlow($app)),
             $exchangePolicy,
         );
         $provider->register($app, static function (string $id): ?User {

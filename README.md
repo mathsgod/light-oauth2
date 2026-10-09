@@ -80,7 +80,7 @@ Revoking a refresh token also revokes its associated access token. Revoking an a
 
 ## Login, 2FA and consent
 
-The default `BrowserAuthorizationFlow` provides password/2FA login followed by a separate allow/deny consent page. To customize this flow, implement `AuthorizationFlow::resolve()`:
+The default `BrowserAuthorizationFlow` provides password/2FA login followed by a consent page with checked scope checkboxes. Users may uncheck permissions before allowing access, or deny the request. At least one scope must remain selected when scopes are offered. To customize this flow, implement `AuthorizationFlow::resolve()`:
 
 - Return a PSR-7 response to show or redirect to login, 2FA or consent.
 - Return `AuthorizationDecision($userId, $approved, $authenticationComplete)` only after checking the user's session and required second factor.
@@ -103,7 +103,7 @@ OAUTH_SCOPES=client.list,quotation.list
 
 Only an authorization request **without a `scope` parameter** selects scopes automatically. Clients can omit `scope` from `/oauth/authorize`; they must still supply the usual client, redirect URI, state, and S256 PKCE parameters. After authentication, the server selects the intersection of the provider's scope allowlist (`OAUTH_SCOPES`), the resolved client's allowed scopes (including CIMD/DCR clients), and the user's current permissions. An empty intersection returns `invalid_scope`. Explicit scopes keep the existing strict validation; an explicitly empty `scope` does not enable automatic selection.
 
-The built-in browser flow displays the selected scopes for consent, binds them to the pending browser session, and requires a new consent page if the selection changes before approval. Token issuance, refresh, and exchange still perform their normal permission checks.
+The built-in browser flow displays eligible scopes as checked checkboxes. Users may grant any nonempty subset. The offered scope list is bound to the pending browser session; if eligibility changes before approval, the flow requires a new consent page. Malformed selections and scopes outside the offered list are rejected. Authorization codes, access tokens, and refresh tokens retain only the approved subset. Token issuance, refresh, and exchange still perform their normal permission checks.
 
 Custom `AuthorizationFlow` implementations must support this opt-in before enabling it. Once the user has completed authentication and required second factors, select scopes before displaying consent:
 
@@ -115,7 +115,7 @@ if ($automatic instanceof \Light\OAuth2\AutomaticScopes) {
 // Render $authorization->getScopes() and bind their identifiers to consent.
 ```
 
-Repeat selection on the consent POST, validate CSRF and the authenticated session, and redisplay consent if the selected scope identifiers differ from those shown. Return an approved `AuthorizationDecision` only after this check. The provider rejects automatic-scope approval if the flow has not selected scopes for that user. This request-local helper is supplied only when automatic selection is enabled and `scope` was omitted.
+Repeat selection on the consent POST, validate CSRF and the authenticated session, and redisplay consent if the selected scope identifiers differ from those shown. To support individual scope selection, call `ConsentScopes::apply($authorization, $submittedScopes)` after checking consent. It validates the selection against the scopes currently on the authorization and replaces them with the selected subset; reject empty selections when scopes were offered. Return an approved `AuthorizationDecision` only after these checks. The provider rejects automatic-scope approval if the flow has not selected scopes for that user. This request-local helper is supplied only when automatic selection is enabled and `scope` was omitted.
 
 ## Resource authentication and MCP
 
@@ -252,3 +252,18 @@ resource audience, permissions, 2FA, consent, metadata and Light integration. CI
 cover document validation, SSRF address restrictions, database overrides, callback matching,
 code/refresh flows, token revocation and exchange-source validation. Load testing
 has not been run.
+
+### Nuxt authorization UI
+
+Keep the authorization endpoint on the API and let `@hostlink/nuxt-light` render login, the two-factor code field, scope checkboxes, and Allow/Deny. Opt in through `ProviderFactory`:
+
+```dotenv
+OAUTH_AUTHORIZATION_UI_URL=https://app.example.com/oauth/authorize
+OAUTH_AUTO_SELECT_SCOPES=true
+```
+
+The API still validates `/oauth/authorize` before redirecting to the configured UI with a random, ten-minute `request_id`. Original OAuth parameters remain in the API's PHP browser session. The frontend uses `GET`/`POST /oauth/interaction?request_id=...` with cookies to obtain view data and submit login or consent. The API verifies the native login/2FA session, CSRF, current permissions, and selected scopes, then returns the validated client callback for top-level navigation. Completed interaction IDs cannot be replayed. The discovery `authorization_endpoint` does not change.
+
+Configure the frontend's `light.oauth.apiBase` to the public API issuer URL. Use same-site frontend/API hosts (for example `app.example.com` and `api.example.com`), or the same loopback hostname on different ports for local development. Do not mix `localhost` and `127.0.0.1`. PHP sessions and Light's native authentication cookies must be usable on the API; retain the existing Light cookie/domain/TLS settings. The interaction endpoint allows credentialed CORS only from the configured UI origin and requires that origin on POST. Reverse proxies must forward the OAuth routes and cookies. Multi-instance APIs need their normal shared PHP session storage.
+
+Manual setup can use `new FrontendAuthorizationFlow(new BrowserAuthorizationFlow($app), $config)` with `authorizationUiUrl` set on `Config`. `OAuthProvider::register()` mounts the interaction routes for this flow. With no UI URL, the existing PHP-rendered browser flow remains the default. Custom flows passed to the factory retain precedence.

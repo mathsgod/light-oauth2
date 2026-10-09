@@ -66,9 +66,15 @@ final class OAuthProvider
             $automatic = $this->config->autoSelectScopes && !array_key_exists('scope', $params)
                 ? new AutomaticScopes($this->permissions) : null;
             if ($automatic !== null) $request = $request->withAttribute(AutomaticScopes::class, $automatic);
+            $request = $request->withAttribute(ScopeRepository::class, $this->scopes);
+            $offeredScopeIds = array_map(fn($scope): string => $scope->getIdentifier(), $authorization->getScopes());
             $decision = $this->flow->resolve($request, $authorization);
             if ($decision instanceof ResponseInterface) return $this->noStore($decision);
             if (!$decision->authenticationComplete) throw OAuthServerException::accessDenied('Complete login and required second factor first');
+            $approvedScopeIds = array_map(fn($scope): string => $scope->getIdentifier(), $authorization->getScopes());
+            if ($decision->approved && $automatic === null && array_diff($approvedScopeIds, $offeredScopeIds) !== []) {
+                throw OAuthServerException::invalidScope('');
+            }
             if ($decision->approved && $automatic !== null) $automatic->assertSelected($authorization, $decision->userId);
             if ($decision->approved) $this->scopes->finalizeScopes($authorization->getScopes(), 'authorization_code', $authorization->getClient(), $decision->userId);
             $authorization->setUser(new User($decision->userId));
@@ -154,6 +160,11 @@ final class OAuthProvider
         $routePrefix = $issuerPath . $this->config->routePrefix;
         $router->map('GET', $routePrefix . '/authorize', [$this, 'authorize']);
         $router->map('POST', $routePrefix . '/authorize', [$this, 'authorize']);
+        if ($this->flow instanceof FrontendAuthorizationFlow) {
+            foreach (['GET', 'POST', 'OPTIONS'] as $method) {
+                $router->map($method, $routePrefix . '/interaction', fn(ServerRequestInterface $request): ResponseInterface => $this->flow->interaction($request, [$this, 'authorize']));
+            }
+        }
         $router->map('POST', $routePrefix . '/token', [$this, 'token']);
         $router->map('POST', $routePrefix . '/revoke', [$this, 'revoke']);
         if ($this->registration !== null) $router->map('POST', $routePrefix . '/register', [$this, 'registerClient']);
@@ -164,7 +175,7 @@ final class OAuthProvider
             if (in_array($path, [$routePrefix . '/token', $routePrefix . '/revoke', ...($this->registration !== null ? [$routePrefix . '/register'] : []), '/.well-known/oauth-authorization-server' . $issuerPath], true)) {
                 return new \Light\Auth\Service($anonymousRequest);
             }
-            if ($path === $routePrefix . '/authorize') {
+            if (in_array($path, [$routePrefix . '/authorize', $routePrefix . '/interaction'], true)) {
                 $native = new \Light\Auth\Service($request);
                 try { $native->getUser(); return $native; }
                 catch (\Light\TokenExpiredException) { return new \Light\Auth\Service($anonymousRequest); }

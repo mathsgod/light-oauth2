@@ -31,7 +31,7 @@ final class AutomaticScopes
     public function assertSelected(AuthorizationRequest $authorization, string $userId): void
     {
         $ids = array_map(fn($scope): string => $scope->getIdentifier(), $authorization->getScopes());
-        if ($this->userId !== $userId || $ids !== $this->selected || $ids === []) {
+        if ($this->userId !== $userId || array_diff($ids, $this->selected) !== [] || $ids === []) {
             throw OAuthServerException::accessDenied('The authorization flow must select automatic scopes before consent');
         }
     }

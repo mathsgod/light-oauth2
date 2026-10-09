@@ -17,12 +17,20 @@ final readonly class Config
         public bool $cimdEnabled = false,
         public bool $dcrEnabled = false,
         public bool $autoSelectScopes = false,
+        public ?string $authorizationUiUrl = null,
     ) {
         foreach ($apiResource === null ? [$issuer, $resource] : [$issuer, $resource, $apiResource] as $url) {
             $parts = parse_url($url);
             if (!$parts || empty($parts['host']) || isset($parts['fragment']) || isset($parts['query']) || isset($parts['user']) ||
                 (($parts['scheme'] ?? '') !== 'https' && !(($parts['scheme'] ?? '') === 'http' && in_array($parts['host'], ['localhost', '127.0.0.1', '[::1]'], true)))) {
                 throw new \InvalidArgumentException('Issuer and resources must be HTTPS URLs (HTTP loopback allowed)');
+            }
+        }
+        if ($authorizationUiUrl !== null) {
+            $ui = parse_url($authorizationUiUrl);
+            if (!$ui || empty($ui['host']) || isset($ui['query']) || isset($ui['fragment']) || isset($ui['user']) || isset($ui['pass']) ||
+                (($ui['scheme'] ?? '') !== 'https' && !(($ui['scheme'] ?? '') === 'http' && in_array($ui['host'], ['localhost', '127.0.0.1', '[::1]'], true)))) {
+                throw new \InvalidArgumentException('Authorization UI requires HTTPS or HTTP loopback without query or credentials');
             }
         }
         if (strlen($encryptionKey) < 32) throw new \InvalidArgumentException('Encryption key must be at least 32 characters');
@@ -36,6 +44,6 @@ final readonly class Config
     /** Keep issuer/keys/settings while selecting the audience validated by a resource server. */
     public function forResource(string $resource): self
     {
-        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled, $this->autoSelectScopes);
+        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled, $this->autoSelectScopes, $this->authorizationUiUrl);
     }
 }

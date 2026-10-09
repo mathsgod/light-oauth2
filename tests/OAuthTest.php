@@ -124,6 +124,38 @@ final class OAuthTest extends TestCase
         $tokens = json_decode((string) $response->getBody(), true);
         self::assertSame(['client.list'], $this->provider->validator()->validate($this->request($tokens['access_token']))->scopes);
     }
+    public function testConsentSubsetIsPreservedInTokensAndRefresh(): void
+    {
+        foreach ([false, true] as $automatic) {
+            $this->store->saveClient(['id' => 'codex', 'name' => 'Codex', 'redirect_uris' => ['http://127.0.0.1:5555/callback'], 'confidential' => false, 'enabled' => true, 'scopes' => ['client.list', 'client.edit']]);
+            $permissions = new class implements PermissionProvider {
+                public function scopes(): array { return ['client.list', 'client.edit']; }
+                public function can(string $userId, string $permission): bool { return $userId === '27' && in_array($permission, $this->scopes(), true); }
+            };
+            $flow = new class implements AuthorizationFlow {
+                public function resolve(ServerRequestInterface $request, AuthorizationRequest $authorization): AuthorizationDecision|ResponseInterface {
+                    $selector = $request->getAttribute(\Light\OAuth2\AutomaticScopes::class);
+                    if ($selector) $selector->select($authorization, '27');
+                    \Light\OAuth2\ConsentScopes::apply($authorization, ['client.list']);
+                    return new AuthorizationDecision('27', true, true);
+                }
+            };
+            $config = new Config($this->config->issuer, $this->config->resource, self::$privateKey, self::$publicKey, str_repeat('x', 32), autoSelectScopes: $automatic);
+            $this->provider = new OAuthProvider($config, $this->store, $permissions, $flow);
+            $response = $this->authorization(['scope' => $automatic ? null : 'client.list client.edit']);
+            self::assertSame(302, $response->getStatusCode(), (string) $response->getBody());
+            parse_str(parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+            $response = $this->exchange(['grant_type' => 'authorization_code', 'client_id' => 'codex', 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'code' => $query['code'], 'code_verifier' => $this->verifier]);
+            self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+            $tokens = json_decode((string) $response->getBody(), true);
+            self::assertSame(['client.list'], $this->provider->validator()->validate($this->request($tokens['access_token']))->scopes);
+            self::assertSame(400, $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $tokens['refresh_token'], 'scope' => 'client.edit'])->getStatusCode());
+            $response = $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $tokens['refresh_token']]);
+            self::assertSame(200, $response->getStatusCode());
+            $refreshed = json_decode((string) $response->getBody(), true);
+            self::assertSame(['client.list'], $this->provider->validator()->validate($this->request($refreshed['access_token']))->scopes);
+        }
+    }
     private function code(): string
     {
         $response = $this->authorization();

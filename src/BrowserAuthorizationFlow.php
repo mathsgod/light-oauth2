@@ -18,10 +18,12 @@ use Psr\Http\Message\ServerRequestInterface;
 /** Reuses Light password/2FA checks and binds explicit consent to the browser. */
 final class BrowserAuthorizationFlow implements AuthorizationFlow
 {
+    private bool $frontend = false;
     public function __construct(private App $app) {}
 
     public function resolve(ServerRequestInterface $request, AuthorizationRequest $authorization): AuthorizationDecision|ResponseInterface
     {
+        $this->frontend = $request->getAttribute(FrontendAuthorizationFlow::INTERACTION) === true;
         session_name('LIGHT_OAUTH_SESSION');
         if (!session_start([
             'use_strict_mode' => 1,
@@ -79,15 +81,25 @@ final class BrowserAuthorizationFlow implements AuthorizationFlow
 
             $automatic = $request->getAttribute(AutomaticScopes::class);
             if ($automatic instanceof AutomaticScopes) $automatic->select($authorization, (string) $user->user_id);
+            $validator = $request->getAttribute(\Light\OAuth2\Repository\ScopeRepository::class);
+            if ($validator instanceof \Light\OAuth2\Repository\ScopeRepository) {
+                $validator->finalizeScopes($authorization->getScopes(), 'authorization_code', $authorization->getClient(), (string) $user->user_id);
+            }
             $scopeIds = array_map(fn($scope) => $scope->getIdentifier(), $authorization->getScopes());
 
             if ($request->getMethod() === 'POST') {
-                if ($automatic instanceof AutomaticScopes && ($entry['consent_scopes'] ?? null) !== $scopeIds) {
+                if (($entry['consent_scopes'] ?? null) !== $scopeIds) {
                     return new RedirectResponse($this->action($request), 303);
                 }
                 if (!in_array($body['action'] ?? '', ['approve', 'deny'], true)
                     || ($entry['session_id'] ?? null) !== $auth->getSessionId()) {
                     return $this->page('Authorization expired', '<p>Please restart authorization.</p>', 403);
+                }
+                if ($body['action'] === 'approve') {
+                    try { ConsentScopes::apply($authorization, $body['scopes'] ?? []); }
+                    catch (\League\OAuth2\Server\Exception\OAuthServerException) {
+                        return $this->page('Invalid scope selection', '<p>Select at least one of the offered permissions. Return to the authorization page to try again.</p>', 400);
+                    }
                 }
                 unset($pending[$key]);
                 return new AuthorizationDecision((string) $user->user_id, $body['action'] === 'approve', true);
@@ -97,12 +109,19 @@ final class BrowserAuthorizationFlow implements AuthorizationFlow
             $entry['consent_scopes'] = $scopeIds;
             $redirectUri = $authorization->getRedirectUri() ?? $authorization->getClient()->getRedirectUri();
             if (is_array($redirectUri)) $redirectUri = $redirectUri[0] ?? null;
-            $scopes = implode('', array_map(fn($scope) => '<li>' . self::escape($scope->getIdentifier()) . '</li>', $authorization->getScopes()));
+            if ($this->frontend) {
+                return new \Laminas\Diactoros\Response\JsonResponse([
+                    'stage' => 'consent', 'client_name' => $authorization->getClient()->getName(),
+                    'username' => $user->username, 'csrf' => $entry['csrf'], 'scopes' => $scopeIds,
+                ]);
+            }
+            $scopes = implode('', array_map(fn($scope) => '<label><input type="checkbox" name="scopes[]" value="' . self::escape($scope->getIdentifier()) . '" checked> ' . self::escape($scope->getIdentifier()) . '</label>', $authorization->getScopes()));
             return $this->page('Authorize application',
                 '<p><strong>' . self::escape($authorization->getClient()->getName()) . '</strong> requests access as '
-                . self::escape($user->username) . '.</p><ul>' . $scopes . '</ul>'
+                . self::escape($user->username) . '.</p><p>Select the permissions you want to allow.</p>'
                 . '<form method="post" action="' . self::escape($this->action($request)) . '">'
                 . '<input type="hidden" name="csrf" value="' . self::escape($entry['csrf']) . '">'
+                . $scopes
                 . '<button name="action" value="approve">Allow access</button> '
                 . '<button name="action" value="deny">Deny</button></form>', 200, $redirectUri);
         } finally {
@@ -117,6 +136,12 @@ final class BrowserAuthorizationFlow implements AuthorizationFlow
 
     private function loginPage(ServerRequestInterface $request, AuthorizationRequest $authorization, string $csrf, string $error = ''): ResponseInterface
     {
+        if ($this->frontend) {
+            return new \Laminas\Diactoros\Response\JsonResponse([
+                'stage' => 'login', 'client_name' => $authorization->getClient()->getName(),
+                'csrf' => $csrf, 'message' => $error,
+            ], $error !== '' ? 400 : 200);
+        }
         return $this->page('Sign in to authorize',
             '<p>Sign in to authorize <strong>' . self::escape($authorization->getClient()->getName()) . '</strong>.</p>'
             . ($error !== '' ? '<p role="alert">' . self::escape($error) . '</p>' : '')
@@ -131,6 +156,7 @@ final class BrowserAuthorizationFlow implements AuthorizationFlow
 
     private function page(string $title, string $body, int $status = 200, ?string $redirectUri = null): ResponseInterface
     {
+        if ($this->frontend) return new \Laminas\Diactoros\Response\JsonResponse(['stage' => 'error', 'message' => $title], $status);
         $formAction = "'self'";
         if ($redirectUri !== null) {
             // Browsers can apply form-action to the POST's redirect as well.
@@ -146,7 +172,7 @@ final class BrowserAuthorizationFlow implements AuthorizationFlow
         return new HtmlResponse('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             . '<meta name="viewport" content="width=device-width, initial-scale=1">'
             . '<title>' . self::escape($title) . '</title>'
-            . '<style>body{font:16px system-ui;background:#f5f6f8;margin:0;padding:24px}main{max-width:440px;margin:8vh auto;background:white;padding:28px;border-radius:12px}label{display:block;margin:16px 0}input:not([type=hidden]){display:block;box-sizing:border-box;width:100%;padding:10px;margin-top:6px}button{padding:10px 16px;cursor:pointer}[role=alert]{color:#b00020}</style>'
+            . '<style>body{font:16px system-ui;background:#f5f6f8;margin:0;padding:24px}main{max-width:440px;margin:8vh auto;background:white;padding:28px;border-radius:12px}label{display:block;margin:16px 0}input:not([type=hidden]):not([type=checkbox]){display:block;box-sizing:border-box;width:100%;padding:10px;margin-top:6px}button{padding:10px 16px;cursor:pointer}[role=alert]{color:#b00020}</style>'
             . '</head><body><main><h1>' . self::escape($title) . '</h1>' . $body . '</main></body></html>',
             $status, ['Content-Security-Policy' => "default-src 'none'; style-src 'unsafe-inline'; form-action {$formAction}; frame-ancestors 'none'; base-uri 'none'", 'X-Content-Type-Options' => 'nosniff', 'Referrer-Policy' => 'no-referrer']);
     }

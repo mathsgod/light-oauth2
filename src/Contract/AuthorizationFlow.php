@@ -14,6 +14,8 @@ interface AuthorizationFlow
      * with the authenticated user before displaying consent and on approval.
      * Bind the displayed scope identifiers to the pending consent; if they
      * change, render consent again instead of approving unseen permissions.
+     * ConsentScopes::apply() can narrow the offered scopes to a user-selected
+     * subset. Never add unrequested scopes when scope was explicitly supplied.
      */
     public function resolve(ServerRequestInterface $request, AuthorizationRequest $authorization): AuthorizationDecision|ResponseInterface;
 }
