@@ -6,15 +6,12 @@ use TheCodingMachine\GraphQLite\Annotations\{Type, Field};
 final class OAuthClientResourcePolicy
 {
     #[Field]
-    public bool $enabled;
-    #[Field]
     public string $defaultResource;
     /** @var OAuthResource[] */
     #[Field]
     public array $resources;
-    public function __construct(bool $enabled, string $defaultResource, array $resources)
+    public function __construct(string $defaultResource, array $resources)
     {
-        $this->enabled = $enabled;
         $this->defaultResource = $defaultResource;
         $this->resources = array_map(fn(array $record) => new OAuthResource($record), $resources);
     }

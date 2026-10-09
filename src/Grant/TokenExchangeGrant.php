@@ -41,7 +41,7 @@ final class TokenExchangeGrant extends AbstractGrant
         }
         $record = $this->store->record('access_token', $subject->tokenId);
         if (!$record || isset($record['exchange_subject'])) throw OAuthServerException::invalidRequest('subject_token', 'Exchange chaining is not supported');
-        if ($this->config->resourceRegistryEnabled) $this->resources?->begin(['resource' => $target['resource']]);
+        $this->resources?->begin(['resource' => $target['resource']]);
         $requested = $params['scope'] ?? implode(' ', array_intersect($subject->scopes, $target['scopes']));
         if (trim($requested) === '') throw OAuthServerException::invalidScope('');
         $scopes = $this->validateScopes($requested);

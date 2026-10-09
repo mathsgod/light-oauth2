@@ -18,7 +18,7 @@ final class ClientManagerTest extends TestCase
             public function scopes(): array { return ['client.list']; }
             public function can(string $userId, string $permission): bool { return false; }
         };
-        $this->manager = new ClientManager($this->store, $permissions);
+        $this->manager = new ClientManager($this->store, $permissions, $this->store->registry('https://api.example.com/', $permissions->scopes()));
     }
 
     private function input(): OAuthClientInput

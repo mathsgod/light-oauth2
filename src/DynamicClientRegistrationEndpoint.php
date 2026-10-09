@@ -11,7 +11,7 @@ use Psr\Http\Message\{ServerRequestInterface, ResponseInterface};
 final class DynamicClientRegistrationEndpoint
 {
     private const MAX_BYTES = 16384;
-    public function __construct(private ClientStore $store, private PermissionProvider $permissions, private ?ResourceRegistry $registry = null) {}
+    public function __construct(private ClientStore $store, private PermissionProvider $permissions, private ResourceRegistry $registry) {}
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
@@ -62,15 +62,12 @@ final class DynamicClientRegistrationEndpoint
         }
         $resources = null;
         $allowedScopes = $this->permissions->scopes();
-        if ($this->registry?->enabled()) {
-            try {
-                if (array_key_exists('resources', $input) && $input['resources'] === null) throw new \InvalidArgumentException('Invalid resources');
-                $resources = $this->registry->clientResources($input['resources'] ?? null);
-                $allowedScopes = $this->registry->registrationScopes($resources, $allowedScopes);
-            } catch (\InvalidArgumentException) { return $this->error('invalid_client_metadata', 'Resources must be enabled and registered by the administrator.'); }
-        } elseif (array_key_exists('resources', $input)) {
-            return $this->error('invalid_client_metadata', 'Enable the resource registry to register resources.');
-        }
+        try {
+            if (array_key_exists('resources', $input) && $input['resources'] === null) throw new \InvalidArgumentException('Invalid resources');
+            $resources = $this->registry->clientResources($input['resources'] ?? null);
+            $allowedScopes = $this->registry->registrationScopes($resources, $allowedScopes);
+        } catch (\InvalidArgumentException) { return $this->error('invalid_client_metadata', 'Resources must be enabled and registered by the administrator.'); }
+    
         $scopes = $allowedScopes;
         if (array_key_exists('scope', $input)) {
             if (!is_string($input['scope']) || !preg_match('/\A[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*\z/', $input['scope'])) {

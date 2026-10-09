@@ -45,12 +45,16 @@ final class OAuthTest extends TestCase
             }
         };
         $this->config = new Config('https://auth.example.com', 'https://api.example.com/', self::$privateKey, self::$publicKey, str_repeat('x', 32));
+        $this->store->seedResources([$this->config->resource], $this->permissions->scopes());
         $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
         $this->verifier = str_repeat('a', 64);
     }
     private function enableMultipleResources(): void
     {
-        $this->config = new Config('https://auth.example.com', 'https://mcp.example.com/mcp', self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: 'https://api.example.com/', additionalResources: ['https://other.example.com/api']);
+        $this->config = new Config('https://auth.example.com', 'https://mcp.example.com/mcp', self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: 'https://api.example.com/');
+        $ids = [$this->config->resource, $this->config->apiResource, 'https://other.example.com/api'];
+        $this->store->seedResources($ids, $this->permissions->scopes());
+        $client = $this->store->client('codex'); $client['resources'] = $ids; $this->store->saveClient($client);
         $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
     }
     private function codeForResource(?string $resource): array
@@ -63,7 +67,7 @@ final class OAuthTest extends TestCase
     public function testDirectResourceTokensAndRefreshKeepTheirAudience(): void
     {
         $this->enableMultipleResources();
-        foreach ($this->config->resources() as $resource) {
+        foreach (array_column($this->store->resources(), 'id') as $resource) {
             $params = $this->codeForResource($resource);
             // Token request may omit resource: use the server-stored authorization.
             $response = $this->exchange($params);
@@ -144,7 +148,7 @@ final class OAuthTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
         $tokens = json_decode((string) $response->getBody(), true);
         $this->provider->validator()->validate($this->request($tokens['access_token']));
-        $selection = new \Light\OAuth2\ResourceSelection($this->config);
+        $selection = new \Light\OAuth2\ResourceSelection($this->config, new \Light\OAuth2\ResourceRegistry($this->config, $this->store));
         $selection->begin([]);
         self::assertSame($this->config->resource, $selection->resource());
     }
@@ -442,8 +446,8 @@ final class OAuthTest extends TestCase
     {
         $a = $this->tokens(); $before = $this->store->records;
         $inner = $this->store;
-        $fault = $this->createStub(\Light\OAuth2\Contract\RefreshTokenStore::class);
-        foreach (['client', 'saveClient', 'record', 'revoke', 'consumeRefreshToken', 'revokeRefreshTokenFamily', 'transaction'] as $method) {
+        $fault = $this->createStub(ResourceRefreshStore::class);
+        foreach (['resource', 'resources', 'createResource', 'saveResource', 'deleteResource', 'client', 'saveClient', 'record', 'revoke', 'consumeRefreshToken', 'revokeRefreshTokenFamily', 'transaction'] as $method) {
             $fault->method($method)->willReturnCallback(fn(...$args) => $inner->$method(...$args));
         }
         $failOnce = true;
@@ -475,12 +479,13 @@ final class OAuthTest extends TestCase
     {
         if (!getenv('OAUTH_TEST_DSN')) self::markTestSkipped('MySQL test connection required');
         $pdo = new \PDO(getenv('OAUTH_TEST_DSN'), getenv('OAUTH_TEST_USER') ?: '', getenv('OAUTH_TEST_PASSWORD') ?: '');
-        $sql = preg_replace('/^--.*$/m', '', file_get_contents(dirname(__DIR__) . '/migrations/001_oauth.sql'));
+        $sql = preg_replace('/^--.*$/m', '', file_get_contents(dirname(__DIR__) . '/migrations/001_oauth.sql') . file_get_contents(dirname(__DIR__) . '/migrations/002_oauth_resources.sql'));
         foreach (explode(';', str_replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMPORARY TABLE', $sql)) as $statement) {
             if (trim($statement) !== '') $pdo->exec($statement);
         }
         $store = new \Light\OAuth2\Storage\PdoStore($pdo);
         $store->saveClient($this->store->client('codex'));
+        $store->saveResource(['id' => $this->config->resource, 'name' => 'API', 'scopes' => $this->permissions->scopes(), 'enabled' => true]);
         $this->provider = new OAuthProvider($this->config, $store, $this->permissions, $this->flow);
         $this->testReplayRevokesDescendantsButNotIndependentAuthorization();
         self::assertFalse($pdo->inTransaction());
@@ -495,6 +500,7 @@ final class OAuthTest extends TestCase
         $client = $this->store->client('codex');
         $client['id'] = 'refresh-race-' . bin2hex(random_bytes(12));
         $store->createClient($client);
+        $store->saveResource(['id' => $this->config->resource, 'name' => 'API', 'scopes' => $this->permissions->scopes(), 'enabled' => true]);
         $workers = [];
         $blocker = null;
         try {

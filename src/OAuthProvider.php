@@ -138,15 +138,14 @@ final class OAuthProvider
     public function register(\Light\App $app, callable $loadUser): void
     {
         if (!method_exists($app, 'getRouter') || !method_exists($app, 'setAuthServiceFactory')) throw new \LogicException('Use a Light version with OAuth extension points: getRouter(), setAuthServiceFactory() and createAuthService()');
-        if ($this->registry->enabled()) {
-            $manager = new Management\ResourceManager($this->store, $this->permissions);
-            $app->getContainer()->add(Controller\OAuthResourceController::class, new Controller\OAuthResourceController($manager));
-            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Controller');
-            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');
-            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Input');
-            if (method_exists($app, 'addPermissions')) $app->addPermissions(['oauth_resource.list', 'oauth_resource.add', 'oauth_resource.update', 'oauth_resource.delete']);
-            $app->addMenus([['label' => 'OAuth Resources', 'to' => '/OAuthResource', 'icon' => 'sym_o_dns', 'permission' => 'oauth_resource.list']]);
-        }
+        $manager = new Management\ResourceManager($this->store, $this->permissions);
+        $app->getContainer()->add(Controller\OAuthResourceController::class, new Controller\OAuthResourceController($manager));
+        $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Controller');
+        $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');
+        $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Input');
+        if (method_exists($app, 'addPermissions')) $app->addPermissions(['oauth_resource.list', 'oauth_resource.add', 'oauth_resource.update', 'oauth_resource.delete']);
+        $app->addMenus([['label' => 'OAuth Resources', 'to' => '/OAuthResource', 'icon' => 'sym_o_dns', 'permission' => 'oauth_resource.list']]);
+    
         if ($this->store instanceof Contract\ClientStore) {
             if (!interface_exists(\Light\GraphQL\ExplicitController::class)) {
                 throw new \LogicException('OAuth client management requires Light explicit controller registration support');

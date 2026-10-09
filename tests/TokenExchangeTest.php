@@ -50,6 +50,9 @@ final class TokenExchangeTest extends TestCase
         $this->flow = new class implements AuthorizationFlow {
             public function resolve(ServerRequestInterface $request, AuthorizationRequest $authorization): AuthorizationDecision|ResponseInterface { return new AuthorizationDecision('27', true, true); }
         };
+        $this->store->seedResources([self::MCP, self::API], $this->permissions->scopes());
+        foreach ($this->store->clients as &$client) $client['resources'] = [self::MCP, self::API];
+        unset($client);
         $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow, $this->policy());
         $this->subject = $this->mint($this->config);
         $this->subjectId = $this->provider->validator()->validate($this->bearer($this->subject))->tokenId;
@@ -96,7 +99,7 @@ final class TokenExchangeTest extends TestCase
         $fetcher = new class implements \Light\OAuth2\ClientMetadata\MetadataFetcher {
             public function fetch(string $url): array { return ['client_id' => $url, 'redirect_uris' => ['http://127.0.0.1/callback'], 'scope' => 'client.list']; }
         };
-        $clients = new \Light\OAuth2\ClientMetadata\ClientResolver($this->store, $this->permissions->scopes(), $fetcher);
+        $clients = new \Light\OAuth2\ClientMetadata\ClientResolver($this->store, $this->permissions->scopes(), $fetcher, new \Light\OAuth2\ResourceRegistry($config, $this->store));
         $repo = new AccessTokenRepository($this->store, $config, $clients);
         $token = $repo->getNewToken(new Client($clients->client($id)), [new Scope('client.list')], '27');
         $token->setIdentifier(bin2hex(random_bytes(20)));
@@ -343,6 +346,8 @@ final class TokenExchangeTest extends TestCase
     public function testMultipleExchangesDoNotConsumeSourceOrLeakTargetState(): void
     {
         $secondTarget = 'https://other.example.com/graphql';
+        $this->store->seedResources([$secondTarget], $this->permissions->scopes());
+        $client = $this->store->client('mcp'); $client['resources'][] = $secondTarget; $this->store->saveClient($client);
         $policy = new TokenExchangePolicy(['mcp' => ['source' => self::MCP, 'targets' => [self::API => ['client.list'], $secondTarget => ['client.list']]]]);
         $provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow, $policy);
         foreach ([self::API, $secondTarget, self::API] as $target) {
@@ -391,13 +396,17 @@ final class TokenExchangeTest extends TestCase
     {
         if (!method_exists(\Light\App::class, 'createAuthService')) self::markTestSkipped('Light OAuth extension points are required');
         $config = new Config($this->config->issuer, self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: $apiResource);
-        $store = $this->createStub(\Light\OAuth2\Contract\RefreshTokenStore::class);
-        foreach (['client', 'saveClient', 'record', 'insert', 'revoke', 'transaction', 'consumeRefreshToken', 'revokeRefreshTokenFamily'] as $method) {
+        $store = $this->createStub(ResourceRefreshStore::class);
+        foreach (['resource', 'resources', 'createResource', 'saveResource', 'deleteResource', 'client', 'saveClient', 'record', 'insert', 'revoke', 'transaction', 'consumeRefreshToken', 'revokeRefreshTokenFamily'] as $method) {
             $store->method($method)->willReturnCallback(fn(...$args) => $this->store->$method(...$args));
         }
         $provider = new OAuthProvider($config, $store, $this->permissions, $this->flow, $this->policy());
         $app = (new \ReflectionClass(\Light\App::class))->newInstanceWithoutConstructor();
         (new \ReflectionProperty(\Light\App::class, 'cache'))->setValue($app, $this->createStub(\Psr\SimpleCache\CacheInterface::class));
+        $container = new \League\Container\Container();
+        (new \ReflectionProperty(\Light\App::class, 'container'))->setValue($app, $container);
+        $cache = new \Symfony\Component\Cache\Psr16Cache(new \Symfony\Component\Cache\Adapter\ArrayAdapter());
+        (new \ReflectionProperty(\Light\App::class, 'factory'))->setValue($app, new \TheCodingMachine\GraphQLite\SchemaFactory($cache, $container));
         $server = $this->createStub(\Light\Server::class);
         $server->method('getRouter')->willReturn(new \League\Route\Router());
         (new \ReflectionProperty(\Light\App::class, 'server'))->setValue($app, $server);

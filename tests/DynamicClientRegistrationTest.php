@@ -22,7 +22,7 @@ final class DynamicClientRegistrationTest extends TestCase
             public function scopes(): array { return ['client.list', 'invoice.list']; }
             public function can(string $userId, string $permission): bool { return $userId === '27' && $permission === 'client.list'; }
         };
-        $this->endpoint = new DynamicClientRegistrationEndpoint($this->store, $this->permissions);
+        $this->endpoint = new DynamicClientRegistrationEndpoint($this->store, $this->permissions, $this->store->registry('https://mcp.example/mcp', $this->permissions->scopes()));
     }
     private function request(string $json, string $type = 'application/json'): ServerRequestInterface
     {

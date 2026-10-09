@@ -26,7 +26,6 @@ final class TokenValidator
     }
     private function resourceScopes(array $client, string $resource, array $scopes): array
     {
-        if (!$this->registry->enabled()) return $scopes;
         try {
             $this->registry->assertClient($client, $resource);
             return $this->registry->scopes($resource, $scopes);

@@ -9,7 +9,7 @@ use Light\OAuth2\Storage\ClientRegistration;
 final class ClientResolver
 {
     private array $resolved = [];
-    public function __construct(private Store $store, private array $scopes, private ?MetadataFetcher $fetcher = null, private ?\Light\OAuth2\ResourceRegistry $registry = null) {}
+    public function __construct(private Store $store, private array $scopes, private ?MetadataFetcher $fetcher, private \Light\OAuth2\ResourceRegistry $registry) {}
 
     public function client(string $id): ?array
     {
@@ -35,11 +35,10 @@ final class ClientResolver
             if ($scope !== null && !is_string($scope)) return null;
             $resources = null;
             $allowedScopes = $this->scopes;
-            if ($this->registry?->enabled()) {
-                if (array_key_exists('resources', $document) && $document['resources'] === null) return null;
-                $resources = $this->registry->clientResources($document['resources'] ?? null);
-                $allowedScopes = $this->registry->registrationScopes($resources, $allowedScopes);
-            } elseif (array_key_exists('resources', $document)) { return null; }
+            if (array_key_exists('resources', $document) && $document['resources'] === null) return null;
+            $resources = $this->registry->clientResources($document['resources'] ?? null);
+            $allowedScopes = $this->registry->registrationScopes($resources, $allowedScopes);
+        
             $allowedScopes = $scope === null ? $allowedScopes : array_values(array_intersect($allowedScopes, explode(' ', $scope)));
             $redirects = $document['redirect_uris'] ?? null;
             if (!is_array($redirects) || !array_is_list($redirects) || !$redirects || count($redirects) > 20) return null;

@@ -31,8 +31,6 @@ final class ProviderFactory
             dcrEnabled: filter_var($_ENV['OAUTH_DCR_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN),
             autoSelectScopes: filter_var($_ENV['OAUTH_AUTO_SELECT_SCOPES'] ?? false, FILTER_VALIDATE_BOOLEAN),
             authorizationUiUrl: self::optional('OAUTH_AUTHORIZATION_UI_URL'),
-            additionalResources: array_values(array_filter(array_map('trim', explode(',', self::optional('OAUTH_RESOURCES') ?? '')))),
-            resourceRegistryEnabled: filter_var($_ENV['OAUTH_RESOURCE_REGISTRY_ENABLED'] ?? false, FILTER_VALIDATE_BOOLEAN),
         );
         $exchangePolicy ??= TokenExchangePolicy::fromEnvironment($_ENV);
         $scopes = array_values(array_unique(array_filter(array_map('trim', explode(',', $_ENV['OAUTH_SCOPES'] ?? 'user.list')))));

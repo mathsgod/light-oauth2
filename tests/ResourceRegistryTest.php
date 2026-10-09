@@ -35,7 +35,7 @@ final class ResourceRegistryTest extends TestCase
     protected function setUp(): void
     {
         $this->store = new MemoryStore();
-        $this->config = new Config('https://auth.example.com', self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: self::API, autoSelectScopes: true, dcrEnabled: true, resourceRegistryEnabled: true);
+        $this->config = new Config('https://auth.example.com', self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: self::API, autoSelectScopes: true, dcrEnabled: true);
         $this->permissions = new class implements PermissionProvider {
             public function scopes(): array { return ['client.list', 'invoice.list', 'client.edit']; }
             public function can(string $userId, string $permission): bool { return $userId === '27' && $permission !== 'client.edit'; }
@@ -77,7 +77,9 @@ final class ResourceRegistryTest extends TestCase
     }
     public function testDatabaseOnlyResourcesAndAutomaticScopesWorkWithoutEnvironmentAllowlist(): void
     {
-        self::assertNotContains(self::OTHER, $this->config->resources());
+        self::assertNotSame(self::OTHER, $this->config->resource);
+        self::assertNotSame(self::OTHER, $this->config->apiResource);
+        self::assertArrayNotHasKey('resourceRegistryEnabled', get_object_vars($this->config));
         $tokens = $this->tokens(self::OTHER);
         self::assertSame(['invoice.list'], $this->context($tokens, self::OTHER)->scopes);
         $denied = $this->authorize(self::OTHER, 'client.list');
@@ -190,9 +192,8 @@ final class ResourceRegistryTest extends TestCase
         $result = \GraphQL\GraphQL::executeQuery($schema, 'mutation { createOAuthClient(input: {id: "graphql", name: "Client", redirectUris: ["https://client.example.com/callback"], resources: ["https://graphql.example.com/"], scopes: ["client.list"], confidential: false, enabled: true}) {client {resources}} }')->toArray();
         self::assertArrayNotHasKey('errors', $result, json_encode($result));
         self::assertSame(['https://graphql.example.com/'], $result['data']['createOAuthClient']['client']['resources']);
-        $result = \GraphQL\GraphQL::executeQuery($schema, '{oauthResources {id name scopes enabled} oauthResourceScopes oauthClientResourcePolicy {enabled defaultResource resources {id scopes enabled}}}')->toArray();
+        $result = \GraphQL\GraphQL::executeQuery($schema, '{oauthResources {id name scopes enabled} oauthResourceScopes oauthClientResourcePolicy {defaultResource resources {id scopes enabled}}}')->toArray();
         self::assertArrayNotHasKey('errors', $result, json_encode($result)); self::assertCount(4, $result['data']['oauthResources']);
-        self::assertTrue($result['data']['oauthClientResourcePolicy']['enabled']);
         self::assertSame(self::MCP, $result['data']['oauthClientResourcePolicy']['defaultResource']);
         self::assertCount(4, $result['data']['oauthClientResourcePolicy']['resources']);
         $security->allowed = false;

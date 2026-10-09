@@ -15,12 +15,12 @@ final class ScopeRepository implements ScopeRepositoryInterface
     }
     private function allowedScopes(): array
     {
-        return $this->registry !== null && $this->resources !== null && $this->registry->enabled()
+        return $this->registry !== null && $this->resources !== null
             ? $this->registry->scopes($this->resources->resource(), $this->permissions->scopes()) : $this->permissions->scopes();
     }
     public function finalizeScopes(array $scopes, string $grantType, ClientEntityInterface $clientEntity, ?string $userIdentifier = null, ?string $authCodeId = null): array
     {
-        if ($this->registry !== null && $this->resources !== null && $this->registry->enabled() && $clientEntity instanceof Client) {
+        if ($this->registry !== null && $this->resources !== null && $clientEntity instanceof Client) {
             $this->registry->assertClient($clientEntity->record, $this->resources->resource());
         }
         foreach ($scopes as $scope) {

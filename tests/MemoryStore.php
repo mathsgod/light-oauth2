@@ -7,6 +7,15 @@ final class MemoryStore implements \Light\OAuth2\Contract\ResourceStore, \Light\
 {
     public array $clients = [];
     public array $resourceRecords = [];
+    public function seedResources(array $ids, array $scopes): void
+    {
+        foreach ($ids as $id) $this->saveResource(['id' => $id, 'name' => $id, 'scopes' => $scopes, 'enabled' => true]);
+    }
+    public function registry(string $defaultResource, array $scopes): \Light\OAuth2\ResourceRegistry
+    {
+        $this->seedResources([$defaultResource], $scopes);
+        return new \Light\OAuth2\ResourceRegistry(new \Light\OAuth2\Config('https://auth.example.com', $defaultResource, 'unused', 'unused', str_repeat('x', 32)), $this);
+    }
     public function resources(): array { return array_values($this->resourceRecords); }
     public function resource(string $id): ?array { return $this->resourceRecords[$id] ?? null; }
     public function createResource(array $resource): void

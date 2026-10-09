@@ -8,7 +8,7 @@ final class ResourceSelection
 {
     private ?string $requested = null;
     private ?string $selected = null;
-    public function __construct(private readonly Config $config, private ?ResourceRegistry $registry = null) {}
+    public function __construct(private readonly Config $config, private ResourceRegistry $registry) {}
     public function reset(): void { $this->requested = $this->selected = null; }
     public function begin(array $params, string $encoded = ''): void
     {
@@ -27,7 +27,6 @@ final class ResourceSelection
     }
     private function supported(string $resource): bool
     {
-        if ($this->registry === null) return in_array($resource, $this->config->resources(), true);
         $this->registry->assertResource($resource);
         return true;
     }

@@ -2,7 +2,7 @@
 declare(strict_types=1);
 namespace Light\OAuth2\Contract;
 
-/** Optional DB registry. Apply migration 002 before enabling registry mode. */
+/** Required resource policy storage. Apply migration 002 before using the provider. */
 interface ResourceStore extends Store
 {
     public function resources(): array;

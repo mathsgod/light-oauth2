@@ -1,4 +1,4 @@
--- Apply before enabling OAUTH_RESOURCE_REGISTRY_ENABLED. No automatic seeding.
+-- Apply before using the provider. Register trusted resources explicitly; no automatic seeding.
 -- Exact resource URL is in record.id; a SHA-256 key supports long URL identities.
 CREATE TABLE IF NOT EXISTS oauth_resources (
     id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,

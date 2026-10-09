@@ -9,6 +9,10 @@ use Light\OAuth2\Repository\ClientRepository;
 final class ClientMetadataTest extends TestCase
 {
     private const ID = 'https://client.example.com/codex/client.json';
+    private function resolver(MemoryStore $store, array $scopes, ?MetadataFetcher $fetcher = null): ClientResolver
+    {
+        return new ClientResolver($store, $scopes, $fetcher, $store->registry('https://api.example.com/', $scopes));
+    }
     private function fetcher(array $changes = []): MetadataFetcher
     {
         return new class($changes) implements MetadataFetcher {
@@ -25,7 +29,7 @@ final class ClientMetadataTest extends TestCase
     {
         $store = new MemoryStore();
         $fetcher = $this->fetcher();
-        $resolver = new ClientResolver($store, ['client.list'], $fetcher);
+        $resolver = $this->resolver($store, ['client.list'], $fetcher);
         $repo = new ClientRepository($store, $resolver);
         self::assertSame(self::ID, $repo->getClientEntity(self::ID)->getIdentifier());
         self::assertTrue($repo->validateClient(self::ID, null, 'authorization_code'));
@@ -36,7 +40,7 @@ final class ClientMetadataTest extends TestCase
     public function testCodexDocumentWithLocalhostAlternativeResolves(): void
     {
         $redirects = ['http://127.0.0.1/callback/wSHsHZ6KgDv5', 'http://localhost/callback/wSHsHZ6KgDv5'];
-        $resolver = new ClientResolver(new MemoryStore(), ['client.list'], $this->fetcher(['redirect_uris' => $redirects]));
+        $resolver = $this->resolver(new MemoryStore(), ['client.list'], $this->fetcher(['redirect_uris' => $redirects]));
         $record = $resolver->client(self::ID);
         self::assertNotNull($record);
         self::assertSame($redirects, $record['redirect_uris']);
@@ -45,7 +49,7 @@ final class ClientMetadataTest extends TestCase
         self::assertFalse($validator->validateRedirectUri('http://127.0.0.1:21486/callback/other'));
         self::assertFalse($validator->validateRedirectUri('http://localhost:21486/callback/wSHsHZ6KgDv5'));
         foreach (['localhost.evil.example', 'evil.localhost', '192.168.1.1'] as $host) {
-            $bad = new ClientResolver(new MemoryStore(), ['client.list'], $this->fetcher(['redirect_uris' => ['http://' . $host . '/callback']]));
+            $bad = $this->resolver(new MemoryStore(), ['client.list'], $this->fetcher(['redirect_uris' => ['http://' . $host . '/callback']]));
             self::assertNull($bad->client(self::ID));
         }
     }
@@ -53,10 +57,10 @@ final class ClientMetadataTest extends TestCase
     public function testDisabledFeatureAndDatabaseOverride(): void
     {
         $store = new MemoryStore();
-        self::assertNull((new ClientResolver($store, ['client.list']))->client(self::ID));
+        self::assertNull(($this->resolver($store, ['client.list']))->client(self::ID));
         $store->saveClient(['id' => self::ID, 'name' => 'Blocked', 'redirect_uris' => ['https://client.example.com/callback'], 'scopes' => [], 'enabled' => false, 'confidential' => false]);
         $fetcher = $this->fetcher();
-        $repo = new ClientRepository($store, new ClientResolver($store, ['client.list'], $fetcher));
+        $repo = new ClientRepository($store, $this->resolver($store, ['client.list'], $fetcher));
         self::assertNull($repo->getClientEntity(self::ID));
         self::assertSame(0, $fetcher->calls);
     }
@@ -64,7 +68,7 @@ final class ClientMetadataTest extends TestCase
     {
         foreach ([['client_id' => 'https://other.example/id'], ['token_endpoint_auth_method' => 'client_secret_basic'], ['client_secret' => 'secret'], ['jwks_uri' => 'https://keys.example/jwks'], ['redirect_uris' => ['http://evil.example/callback']], ['redirect_uris' => []], ['redirect_uris' => ['https://app.example/cb#fragment']], ['redirect_uris' => ['https://user:pass@app.example/cb']], ['client_name' => []], ['scope' => []], ['grant_types' => ['client_credentials']], ['response_types' => ['token']], ['grant_types' => [[]]]] as $changes) {
             $fetcher = $this->fetcher($changes);
-            $resolver = new ClientResolver(new MemoryStore(), ['client.list'], $fetcher);
+            $resolver = $this->resolver(new MemoryStore(), ['client.list'], $fetcher);
             self::assertNull($resolver->client(self::ID), json_encode($changes));
             self::assertNull($resolver->client(self::ID));
             self::assertSame(2, $fetcher->calls);
@@ -76,7 +80,7 @@ final class ClientMetadataTest extends TestCase
             public int $calls = 0;
             public function fetch(string $url): array { $this->calls++; throw new \RuntimeException('network unavailable'); }
         };
-        $resolver = new ClientResolver(new MemoryStore(), ['client.list'], $fetcher);
+        $resolver = $this->resolver(new MemoryStore(), ['client.list'], $fetcher);
         self::assertNull($resolver->client(self::ID));
         self::assertNull($resolver->client(self::ID));
         self::assertSame(2, $fetcher->calls);
@@ -90,7 +94,7 @@ final class ClientMetadataTest extends TestCase
 
     public function testScopeCannotExpandServerPermissions(): void
     {
-        $resolver = new ClientResolver(new MemoryStore(), ['client.list'], $this->fetcher(['scope' => 'client.list administrator']));
+        $resolver = $this->resolver(new MemoryStore(), ['client.list'], $this->fetcher(['scope' => 'client.list administrator']));
         self::assertSame(['client.list'], $resolver->client(self::ID)['scopes']);
     }
     public function testUrlAndSsrfPolicy(): void

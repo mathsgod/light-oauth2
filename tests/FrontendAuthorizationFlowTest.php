@@ -26,6 +26,7 @@ final class FrontendAuthorizationFlowTest extends ApplicationTestCase
         openssl_pkey_export($key, $privateKey);
         $config = new Config('https://api.example.com', 'https://mcp.example.com/mcp', $privateKey, openssl_pkey_get_details($key)['key'], str_repeat('k', 32), autoSelectScopes: true, authorizationUiUrl: 'https://app.example.com/oauth/authorize');
         $store = new MemoryStore();
+        $store->seedResources([$config->resource], ['client.list', 'quotation.list']);
         $store->saveClient(['id' => 'test', 'name' => 'Frontend client', 'redirect_uris' => ['http://127.0.0.1:5556/callback'], 'scopes' => ['client.list', 'quotation.list'], 'confidential' => false, 'enabled' => true]);
         $permissions = new class implements PermissionProvider {
             public function scopes(): array { return ['client.list', 'quotation.list']; }
