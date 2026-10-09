@@ -190,8 +190,11 @@ final class ResourceRegistryTest extends TestCase
         $result = \GraphQL\GraphQL::executeQuery($schema, 'mutation { createOAuthClient(input: {id: "graphql", name: "Client", redirectUris: ["https://client.example.com/callback"], resources: ["https://graphql.example.com/"], scopes: ["client.list"], confidential: false, enabled: true}) {client {resources}} }')->toArray();
         self::assertArrayNotHasKey('errors', $result, json_encode($result));
         self::assertSame(['https://graphql.example.com/'], $result['data']['createOAuthClient']['client']['resources']);
-        $result = \GraphQL\GraphQL::executeQuery($schema, '{oauthResources {id name scopes enabled} oauthResourceScopes}')->toArray();
+        $result = \GraphQL\GraphQL::executeQuery($schema, '{oauthResources {id name scopes enabled} oauthResourceScopes oauthClientResourcePolicy {enabled defaultResource resources {id scopes enabled}}}')->toArray();
         self::assertArrayNotHasKey('errors', $result, json_encode($result)); self::assertCount(4, $result['data']['oauthResources']);
+        self::assertTrue($result['data']['oauthClientResourcePolicy']['enabled']);
+        self::assertSame(self::MCP, $result['data']['oauthClientResourcePolicy']['defaultResource']);
+        self::assertCount(4, $result['data']['oauthClientResourcePolicy']['resources']);
         $security->allowed = false;
         self::assertArrayHasKey('errors', \GraphQL\GraphQL::executeQuery($schema, $mutation)->toArray());
         self::assertArrayHasKey('errors', \GraphQL\GraphQL::executeQuery($schema, '{oauthResources {id}}')->toArray());

@@ -13,6 +13,10 @@ final class ResourceRegistry
             throw new \LogicException('Resource registry requires a ResourceStore');
         }
     }
+    public function clientPolicy(): Type\OAuthClientResourcePolicy
+    {
+        return new Type\OAuthClientResourcePolicy($this->enabled(), $this->config->resource, $this->enabled() ? $this->store->resources() : []);
+    }
     public function enabled(): bool { return $this->config->resourceRegistryEnabled; }
     public function record(string $id): ?array
     {

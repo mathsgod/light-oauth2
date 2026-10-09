@@ -17,6 +17,10 @@ final class ClientManager
 
     /** @return string[] */
     public function scopes(): array { return $this->permissions->scopes(); }
+    public function resourcePolicy(): \Light\OAuth2\Type\OAuthClientResourcePolicy
+    {
+        return $this->registry?->clientPolicy() ?? new \Light\OAuth2\Type\OAuthClientResourcePolicy(false, '', []);
+    }
 
     public function save(OAuthClientInput $input, bool $create): OAuthClientSaved
     {

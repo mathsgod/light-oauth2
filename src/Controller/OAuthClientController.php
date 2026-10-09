@@ -18,6 +18,9 @@ final class OAuthClientController implements \Light\GraphQL\ExplicitController
     #[Query, Logged, Right('oauth_client.list')]
     public function oauthClientScopes(): array { return $this->manager->scopes(); }
 
+    #[Query, Logged, Right('oauth_client.list')]
+    public function oauthClientResourcePolicy(): \Light\OAuth2\Type\OAuthClientResourcePolicy { return $this->manager->resourcePolicy(); }
+
     #[Mutation, Logged, Right('oauth_client.add')]
     public function createOAuthClient(OAuthClientInput $input): OAuthClientSaved { return $this->manager->save($input, true); }
 

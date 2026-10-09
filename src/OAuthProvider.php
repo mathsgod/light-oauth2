@@ -145,6 +145,7 @@ final class OAuthProvider
             $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');
             $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Input');
             if (method_exists($app, 'addPermissions')) $app->addPermissions(['oauth_resource.list', 'oauth_resource.add', 'oauth_resource.update', 'oauth_resource.delete']);
+            $app->addMenus([['label' => 'OAuth Resources', 'to' => '/OAuthResource', 'icon' => 'sym_o_dns', 'permission' => 'oauth_resource.list']]);
         }
         if ($this->store instanceof Contract\ClientStore) {
             if (!interface_exists(\Light\GraphQL\ExplicitController::class)) {

@@ -36,6 +36,8 @@ Registry mode registers these operations (a frontend management page is outside 
 | `updateOAuthResource(input: OAuthResourceInput!)` | `oauth_resource.update` |
 | `deleteOAuthResource(id: String!)` | `oauth_resource.delete` |
 
+The `oauthClientResourcePolicy` query (requiring `oauth_client.list`) returns `enabled`, `defaultResource` and the resource catalog for client resource selectors. It does not grant resource-management rights. The provider adds an `/OAuthResource` menu entry when registry mode is enabled; the frontend page is supplied by `nuxt-light`.
+
 All require login. Resource permissions are registered with Light but are not granted automatically. The resource input and output fields are `id`, `name`, `scopes`, `enabled`.
 
 ```graphql
