@@ -3,9 +3,28 @@ declare(strict_types=1);
 namespace Light\OAuth2\Tests;
 use Light\OAuth2\Storage\ClientRegistration;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
-final class MemoryStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore, \Light\OAuth2\Contract\RefreshTokenStore
+final class MemoryStore implements \Light\OAuth2\Contract\ResourceStore, \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore, \Light\OAuth2\Contract\RefreshTokenStore
 {
     public array $clients = [];
+    public array $resourceRecords = [];
+    public function resources(): array { return array_values($this->resourceRecords); }
+    public function resource(string $id): ?array { return $this->resourceRecords[$id] ?? null; }
+    public function createResource(array $resource): void
+    {
+        if (isset($this->resourceRecords[$resource['id']])) throw new \InvalidArgumentException('Resource already exists');
+        $this->saveResource($resource);
+    }
+    public function saveResource(array $resource): void
+    {
+        \Light\OAuth2\Storage\ResourceRegistration::validate($resource);
+        $this->resourceRecords[$resource['id']] = $resource;
+    }
+    public function deleteResource(string $id): bool
+    {
+        $exists = isset($this->resourceRecords[$id]);
+        unset($this->resourceRecords[$id]);
+        return $exists;
+    }
     public array $records = [];
     public function clients(): array { return array_values($this->clients); }
     public function createClient(array $client): void
@@ -86,7 +105,7 @@ final class MemoryStore implements \Light\OAuth2\Contract\ClientStore, \Light\OA
     }
     public function transaction(callable $operation): mixed
     {
-        $snapshot = $this->records;
-        try { return $operation(); } catch (\Throwable $error) { $this->records = $snapshot; throw $error; }
+        $snapshot = [$this->records, $this->clients, $this->resourceRecords];
+        try { return $operation(); } catch (\Throwable $error) { [$this->records, $this->clients, $this->resourceRecords] = $snapshot; throw $error; }
     }
 }

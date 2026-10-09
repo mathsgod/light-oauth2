@@ -10,6 +10,12 @@ final class ClientRegistration
             !is_array($client['redirect_uris'] ?? null) || !$client['redirect_uris'] || !is_array($client['scopes'] ?? null)) {
             throw new \InvalidArgumentException('Invalid OAuth client record');
         }
+        if (array_key_exists('resources', $client)) {
+            if (!is_array($client['resources']) || !array_is_list($client['resources']) || !$client['resources'] || count($client['resources']) > 20) throw new \InvalidArgumentException('Invalid client resources');
+            foreach ($client['resources'] as $id) {
+                ResourceRegistration::validate(['id' => $id, 'name' => 'Client resource', 'enabled' => true, 'scopes' => []]);
+            }
+        }
         if ($client['confidential'] && empty($client['secret_hash'])) throw new \InvalidArgumentException('Confidential client requires a hashed secret');
         foreach ($client['redirect_uris'] as $uri) {
             if (!is_string($uri)) throw new \InvalidArgumentException('Invalid redirect URI');

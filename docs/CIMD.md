@@ -90,3 +90,7 @@ codex mcp login hostlink --scopes client.list --oauth-client-registration cimd
 Codex can then use its hosted metadata document as the client ID. The callback-specific
 CIMD form works without issuer-bound authorization responses; this package does not
 advertise `authorization_response_iss_parameter_supported` as part of CIMD support.
+
+## Resource registry
+
+With `OAUTH_RESOURCE_REGISTRY_ENABLED=true`, the custom `resources` metadata list selects administrator-registered, enabled resources. Omission grants only the default resource; metadata never creates new resource records. See [resource policy and registration examples](RESOURCES.md).

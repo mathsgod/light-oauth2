@@ -12,11 +12,12 @@ OAuth 2.0 Authorization Code + S256 PKCE integration for Light, powered by Leagu
 - MySQL/MariaDB storage with transactional token exchange and row locks to serialize credential reuse.
 - Authorization-server and protected-resource metadata responses.
 - Resource-specific JWT audience, issuer validation, expiry/signature/revocation validation.
+- Opt-in database resource registry with per-resource scopes, client assignments and permission-protected GraphQL management.
 - Light authentication adapter and permission scopes. Effective rights require token scope, client-allowed scope, OAuth-exposed scope and the user's current permission.
 - Default Light login/2FA and consent pages, with customizable `AuthorizationFlow`.
 - Opt-in RFC 8693 access-token exchange with confidential-client authentication, explicit source/target allowlists and scope narrowing.
 
-This package does not supply confidential-client DCR, RFC 7592 registration management, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each provider authorizes one configured resource; optional token exchange can issue tokens for explicitly allowed downstream resources. Consent must be collected on each authorization, or explicitly remembered and checked by the application flow.
+This package does not supply confidential-client DCR, RFC 7592 registration management, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each authorization selects one configured resource. See [direct API authorization and resource binding](docs/RESOURCES.md). Token exchange is optional and retains its separate source/target policy.
 
 ### Refresh token replay protection
 
@@ -51,12 +52,14 @@ The user loader must return an active `Light\Model\User` or null. `LightPermissi
 
 ## Setup
 
+For direct client access to GraphQL, see [resource selection](docs/RESOURCES.md).
+
 For service-to-service access on behalf of a user (including MCP to GraphQL), see [access-token exchange](docs/TOKEN_EXCHANGE.md).
 
 Light GraphQL applications can set `OAUTH_API_RESOURCE` for the API token audience and `OAUTH_TOKEN_EXCHANGE_POLICY` for the exchange allowlist. `ProviderFactory::registerFromEnvironment($app)` installs the built-in token validation and scope-aware authentication; no application auth factory override is needed.
 
 1. `composer install`.
-2. Apply `migrations/001_oauth.sql` through the application's migration runner.
+2. Apply `migrations/001_oauth.sql` through the application's migration runner. For DB resource policy, also apply `migrations/002_oauth_resources.sql`, seed resources and assign clients before setting `OAUTH_RESOURCE_REGISTRY_ENABLED=true`; see [resource setup](docs/RESOURCES.md).
 3. Create separate OAuth RSA keys outside the web root, and a random encryption key of at least 32 characters. Keep all keys out of source control. Use HTTPS outside loopback development.
 4. Configure the environment and use `ProviderFactory::registerFromEnvironment($app)` with the built-in login/consent flow, or construct `Config`, `PdoStore`, a permission provider and an `AuthorizationFlow` manually.
 5. Register database clients once; see `examples/register-client.php`. Store only `password_hash()` output for confidential-client secrets. Public clients can instead use opt-in [DCR](docs/DCR.md) for automatic registration, or [CIMD](docs/CIMD.md) without a database client record.

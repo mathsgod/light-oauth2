@@ -9,7 +9,7 @@ use Light\OAuth2\Storage\ClientRegistration;
 final class ClientResolver
 {
     private array $resolved = [];
-    public function __construct(private Store $store, private array $scopes, private ?MetadataFetcher $fetcher = null) {}
+    public function __construct(private Store $store, private array $scopes, private ?MetadataFetcher $fetcher = null, private ?\Light\OAuth2\ResourceRegistry $registry = null) {}
 
     public function client(string $id): ?array
     {
@@ -33,7 +33,14 @@ final class ClientResolver
             }
             $scope = $document['scope'] ?? null;
             if ($scope !== null && !is_string($scope)) return null;
-            $allowedScopes = $scope === null ? $this->scopes : array_values(array_intersect($this->scopes, explode(' ', $scope)));
+            $resources = null;
+            $allowedScopes = $this->scopes;
+            if ($this->registry?->enabled()) {
+                if (array_key_exists('resources', $document) && $document['resources'] === null) return null;
+                $resources = $this->registry->clientResources($document['resources'] ?? null);
+                $allowedScopes = $this->registry->registrationScopes($resources, $allowedScopes);
+            } elseif (array_key_exists('resources', $document)) { return null; }
+            $allowedScopes = $scope === null ? $allowedScopes : array_values(array_intersect($allowedScopes, explode(' ', $scope)));
             $redirects = $document['redirect_uris'] ?? null;
             if (!is_array($redirects) || !array_is_list($redirects) || !$redirects || count($redirects) > 20) return null;
             // Validate the same record shape without the database ID length limit.
@@ -41,6 +48,7 @@ final class ClientResolver
                 'redirect_uris' => $redirects, 'scopes' => $allowedScopes, 'confidential' => false, 'enabled' => true];
             // Codex publishes localhost alongside its loopback IP callback.
             // These are browser redirects, never metadata fetch destinations.
+            if ($resources !== null) $record['resources'] = $resources;
             ClientRegistration::validate($record, allowLocalhost: true);
             foreach ($redirects as $uri) {
                 if (strlen($uri) > 2048 || preg_match('/[^\x21-\x7E]/', $uri) || str_contains($uri, '\\')) return null;

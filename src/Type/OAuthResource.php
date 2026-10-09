@@ -2,9 +2,8 @@
 declare(strict_types=1);
 namespace Light\OAuth2\Type;
 use TheCodingMachine\GraphQLite\Annotations\{Type, Field};
-
 #[Type]
-final class OAuthClient
+final class OAuthResource
 {
     #[Field]
     public string $id;
@@ -12,26 +11,14 @@ final class OAuthClient
     public string $name;
     /** @var string[] */
     #[Field]
-    public array $redirectUris;
-    /** @var string[] */
-    #[Field]
     public array $scopes;
-    /** @var string[] */
-    #[Field]
-    public array $resources;
-    #[Field]
-    public bool $confidential;
     #[Field]
     public bool $enabled;
-
     public function __construct(array $record)
     {
         $this->id = $record['id'];
         $this->name = $record['name'];
-        $this->redirectUris = $record['redirect_uris'];
         $this->scopes = $record['scopes'];
-        $this->resources = $record['resources'] ?? [];
-        $this->confidential = $record['confidential'];
         $this->enabled = $record['enabled'];
     }
 }

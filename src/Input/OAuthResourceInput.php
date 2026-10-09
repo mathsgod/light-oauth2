@@ -2,9 +2,8 @@
 declare(strict_types=1);
 namespace Light\OAuth2\Input;
 use TheCodingMachine\GraphQLite\Annotations\{Input, Field};
-
 #[Input]
-final class OAuthClientInput
+final class OAuthResourceInput
 {
     #[Field]
     public string $id;
@@ -12,15 +11,7 @@ final class OAuthClientInput
     public string $name;
     /** @var string[] */
     #[Field]
-    public array $redirectUris;
-    /** @var string[] */
-    #[Field]
     public array $scopes;
-    /** @var string[]|null */
-    #[Field]
-    public ?array $resources = null;
-    #[Field]
-    public bool $confidential;
     #[Field]
     public bool $enabled;
 }

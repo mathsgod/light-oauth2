@@ -11,7 +11,7 @@ use Psr\Http\Message\{ServerRequestInterface, ResponseInterface};
 final class DynamicClientRegistrationEndpoint
 {
     private const MAX_BYTES = 16384;
-    public function __construct(private ClientStore $store, private PermissionProvider $permissions) {}
+    public function __construct(private ClientStore $store, private PermissionProvider $permissions, private ?ResourceRegistry $registry = null) {}
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
@@ -60,18 +60,30 @@ final class DynamicClientRegistrationEndpoint
                 return $this->error('invalid_redirect_uri', 'Redirect URIs must be absolute HTTPS or HTTP loopback IP URLs without wildcards.');
             }
         }
-        $scopes = $this->permissions->scopes();
+        $resources = null;
+        $allowedScopes = $this->permissions->scopes();
+        if ($this->registry?->enabled()) {
+            try {
+                if (array_key_exists('resources', $input) && $input['resources'] === null) throw new \InvalidArgumentException('Invalid resources');
+                $resources = $this->registry->clientResources($input['resources'] ?? null);
+                $allowedScopes = $this->registry->registrationScopes($resources, $allowedScopes);
+            } catch (\InvalidArgumentException) { return $this->error('invalid_client_metadata', 'Resources must be enabled and registered by the administrator.'); }
+        } elseif (array_key_exists('resources', $input)) {
+            return $this->error('invalid_client_metadata', 'Enable the resource registry to register resources.');
+        }
+        $scopes = $allowedScopes;
         if (array_key_exists('scope', $input)) {
             if (!is_string($input['scope']) || !preg_match('/\A[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*\z/', $input['scope'])) {
                 return $this->error('invalid_client_metadata', 'Invalid scope.');
             }
             $scopes = array_values(array_unique(explode(' ', $input['scope'])));
-            if (array_diff($scopes, $this->permissions->scopes())) return $this->error('invalid_client_metadata', 'Requested scope is not exposed by this server.');
+            if (array_diff($scopes, $allowedScopes)) return $this->error('invalid_client_metadata', 'Requested scope is not exposed by this server.');
         }
         $record = ['id' => 'dcr_' . bin2hex(random_bytes(24)), 'name' => $name,
             'redirect_uris' => array_values(array_unique($redirects)), 'scopes' => $scopes,
             'confidential' => false, 'enabled' => true, 'grant_types' => array_values(array_unique($grants)),
             'client_id_issued_at' => time(), 'registration_source' => 'dcr'];
+        if ($resources !== null) $record['resources'] = $resources;
         try {
             ClientRegistration::validate($record);
         } catch (\InvalidArgumentException) {
@@ -84,6 +96,7 @@ final class DynamicClientRegistrationEndpoint
             'client_name' => $record['name'], 'redirect_uris' => $record['redirect_uris'],
             'token_endpoint_auth_method' => 'none', 'grant_types' => $record['grant_types'],
             'response_types' => ['code'], 'scope' => implode(' ', $record['scopes']),
+            ...($resources === null ? [] : ['resources' => $resources]),
         ], 201);
     }
 

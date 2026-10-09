@@ -11,6 +11,7 @@ final class AccessToken implements AccessTokenEntityInterface
     private ?string $targetResource = null;
     private ?string $subjectTokenId = null;
     public function __construct(private readonly Config $config) {}
+    public function setResource(string $resource): void { $this->targetResource = $resource; }
     public function setExchangeTarget(string $resource, string $subjectTokenId): void
     {
         $this->targetResource = $resource;

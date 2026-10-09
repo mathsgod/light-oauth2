@@ -8,10 +8,14 @@ use Light\OAuth2\Config;
 use Light\OAuth2\Entity\AccessToken;
 final class AccessTokenRepository implements AccessTokenRepositoryInterface
 {
-    public function __construct(private Store $store, private Config $config, private ?\Light\OAuth2\ClientMetadata\ClientResolver $clients = null) {}
+    public function __construct(private Store $store, private Config $config, private ?\Light\OAuth2\ClientMetadata\ClientResolver $clients = null, private ?\Light\OAuth2\ResourceSelection $resources = null, private ?\Light\OAuth2\ResourceRegistry $registry = null) {}
     public function getNewToken(ClientEntityInterface $clientEntity, array $scopes, ?string $userIdentifier = null): AccessTokenEntityInterface
     {
+        if ($this->registry?->enabled() && $clientEntity instanceof \Light\OAuth2\Entity\Client) {
+            $this->registry->assertClient($clientEntity->record, $this->resources?->resource() ?? $this->config->resource);
+        }
         $token = new AccessToken($this->config); $token->setClient($clientEntity);
+        if ($this->resources !== null) $token->setResource($this->resources->resource());
         if ($userIdentifier !== null) $token->setUserIdentifier($userIdentifier);
         foreach ($scopes as $scope) $token->addScope($scope);
         return $token;

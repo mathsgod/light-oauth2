@@ -18,7 +18,7 @@ final class TokenExchangeGrant extends AbstractGrant
     public const IDENTIFIER = 'urn:ietf:params:oauth:grant-type:token-exchange';
     public const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 
-    public function __construct(private Config $config, private Store $store, private TokenValidator $validator, private TokenExchangePolicy $policy) {}
+    public function __construct(private Config $config, private Store $store, private TokenValidator $validator, private TokenExchangePolicy $policy, private ?\Light\OAuth2\ResourceSelection $resources = null) {}
     public function getIdentifier(): string { return self::IDENTIFIER; }
 
     public function respondToAccessTokenRequest(ServerRequestInterface $request, ResponseTypeInterface $responseType, \DateInterval $accessTokenTTL): ResponseTypeInterface
@@ -41,6 +41,7 @@ final class TokenExchangeGrant extends AbstractGrant
         }
         $record = $this->store->record('access_token', $subject->tokenId);
         if (!$record || isset($record['exchange_subject'])) throw OAuthServerException::invalidRequest('subject_token', 'Exchange chaining is not supported');
+        if ($this->config->resourceRegistryEnabled) $this->resources?->begin(['resource' => $target['resource']]);
         $requested = $params['scope'] ?? implode(' ', array_intersect($subject->scopes, $target['scopes']));
         if (trim($requested) === '') throw OAuthServerException::invalidScope('');
         $scopes = $this->validateScopes($requested);

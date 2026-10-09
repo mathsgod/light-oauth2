@@ -13,13 +13,13 @@ final class AutomaticScopes
     private ?string $userId = null;
     private array $selected = [];
 
-    public function __construct(private PermissionProvider $permissions) {}
+    public function __construct(private PermissionProvider $permissions, private ?array $resourceScopes = null) {}
 
     public function select(AuthorizationRequest $authorization, string $userId): void
     {
         $client = $authorization->getClient();
         $ids = $client instanceof Client ? array_values(array_filter(
-            array_intersect($this->permissions->scopes(), $client->record['scopes']),
+            array_intersect($this->permissions->scopes(), $client->record['scopes'], $this->resourceScopes ?? $this->permissions->scopes()),
             fn(string $scope): bool => $this->permissions->can($userId, $scope),
         )) : [];
         if ($ids === []) throw OAuthServerException::invalidScope('');

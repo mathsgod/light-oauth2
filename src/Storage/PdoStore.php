@@ -3,13 +3,51 @@ declare(strict_types=1);
 namespace Light\OAuth2\Storage;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
 use PDO;
-final class PdoStore implements \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore, \Light\OAuth2\Contract\RefreshTokenStore
+final class PdoStore implements \Light\OAuth2\Contract\ResourceStore, \Light\OAuth2\Contract\ClientStore, \Light\OAuth2\Contract\AuthorizationStore, \Light\OAuth2\Contract\RefreshTokenStore
 {
     public function __construct(private PDO $pdo)
     {
         if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'mysql') throw new \InvalidArgumentException('PdoStore requires MySQL/MariaDB');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
+    }
+    public function resources(): array
+    {
+        $rows = $this->pdo->query('SELECT record FROM oauth_resources ORDER BY id')->fetchAll(PDO::FETCH_COLUMN);
+        return array_map(fn(string $value): array => json_decode($value, true, 512, JSON_THROW_ON_ERROR), $rows);
+    }
+    public function resource(string $id): ?array
+    {
+        $lock = $this->pdo->inTransaction() ? ' FOR UPDATE' : '';
+        $statement = $this->pdo->prepare('SELECT record FROM oauth_resources WHERE id = ?' . $lock);
+        $statement->execute([hash('sha256', $id)]);
+        $value = $statement->fetchColumn();
+        if ($value === false) return null;
+        $record = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        return $record['id'] === $id ? $record : null;
+    }
+    public function createResource(array $resource): void
+    {
+        ResourceRegistration::validate($resource);
+        try {
+            $statement = $this->pdo->prepare('INSERT INTO oauth_resources (id, record) VALUES (?, ?)');
+            $statement->execute([hash('sha256', $resource['id']), json_encode($resource, JSON_THROW_ON_ERROR)]);
+        } catch (\PDOException $error) {
+            if (($error->errorInfo[1] ?? null) === 1062) throw new \InvalidArgumentException('Resource already exists');
+            throw $error;
+        }
+    }
+    public function saveResource(array $resource): void
+    {
+        ResourceRegistration::validate($resource);
+        $statement = $this->pdo->prepare('INSERT INTO oauth_resources (id, record) VALUES (?, ?) ON DUPLICATE KEY UPDATE record = VALUES(record)');
+        $statement->execute([hash('sha256', $resource['id']), json_encode($resource, JSON_THROW_ON_ERROR)]);
+    }
+    public function deleteResource(string $id): bool
+    {
+        $statement = $this->pdo->prepare('DELETE FROM oauth_resources WHERE id = ?');
+        $statement->execute([hash('sha256', $id)]);
+        return $statement->rowCount() > 0;
     }
     public function clients(): array
     {

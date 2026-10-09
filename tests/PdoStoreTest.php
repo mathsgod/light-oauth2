@@ -6,6 +6,22 @@ use Light\OAuth2\Storage\PdoStore;
 use League\OAuth2\Server\Exception\UniqueTokenIdentifierConstraintViolationException;
 final class PdoStoreTest extends TestCase
 {
+    public function testMysqlResourceRegistryPersistenceAndRollback(): void
+    {
+        if (!getenv('OAUTH_TEST_DSN')) self::markTestSkipped('Set OAUTH_TEST_DSN for MySQL');
+        $pdo = new \PDO(getenv('OAUTH_TEST_DSN'), getenv('OAUTH_TEST_USER') ?: '', getenv('OAUTH_TEST_PASSWORD') ?: '');
+        $sql = preg_replace('/^--.*$/m', '', file_get_contents(dirname(__DIR__) . '/migrations/002_oauth_resources.sql'));
+        $pdo->exec(str_replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMPORARY TABLE', $sql));
+        $store = new PdoStore($pdo);
+        $record = ['id' => 'https://api.example.com/' . str_repeat('x', 1000), 'name' => 'API', 'scopes' => ['client.list'], 'enabled' => true];
+        $store->createResource($record); self::assertSame($record, $store->resource($record['id'])); self::assertSame([$record], $store->resources());
+        self::assertNull($store->resource($record['id'] . '/'));
+        try { $store->createResource($record); self::fail('Duplicate accepted'); } catch (\InvalidArgumentException) { self::assertCount(1, $store->resources()); }
+        try { $store->transaction(function () use ($store, $record) { $record['enabled'] = false; $store->saveResource($record); throw new \RuntimeException('rollback'); }); } catch (\RuntimeException) {}
+        self::assertTrue($store->resource($record['id'])['enabled']);
+        $record['enabled'] = false; $store->saveResource($record); self::assertFalse($store->resource($record['id'])['enabled']);
+        self::assertTrue($store->deleteResource($record['id'])); self::assertNull($store->resource($record['id'])); self::assertFalse($store->deleteResource($record['id']));
+    }
     public function testMysqlPersistenceRevocationRollbackAndDuplicate(): void
     {
         if (!getenv('OAUTH_TEST_DSN')) self::markTestSkipped('Set OAUTH_TEST_DSN, OAUTH_TEST_USER, OAUTH_TEST_PASSWORD for MySQL');

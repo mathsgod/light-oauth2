@@ -48,6 +48,118 @@ final class OAuthTest extends TestCase
         $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
         $this->verifier = str_repeat('a', 64);
     }
+    private function enableMultipleResources(): void
+    {
+        $this->config = new Config('https://auth.example.com', 'https://mcp.example.com/mcp', self::$privateKey, self::$publicKey, str_repeat('x', 32), apiResource: 'https://api.example.com/', additionalResources: ['https://other.example.com/api']);
+        $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
+    }
+    private function codeForResource(?string $resource): array
+    {
+        $response = $this->authorization(['resource' => $resource]);
+        self::assertSame(302, $response->getStatusCode(), (string) $response->getBody());
+        parse_str(parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        return ['grant_type' => 'authorization_code', 'client_id' => 'codex', 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'code' => $query['code'], 'code_verifier' => $this->verifier];
+    }
+    public function testDirectResourceTokensAndRefreshKeepTheirAudience(): void
+    {
+        $this->enableMultipleResources();
+        foreach ($this->config->resources() as $resource) {
+            $params = $this->codeForResource($resource);
+            // Token request may omit resource: use the server-stored authorization.
+            $response = $this->exchange($params);
+            self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+            $tokens = json_decode((string) $response->getBody(), true);
+            $validator = new TokenValidator($this->config->forResource($resource), $this->store);
+            self::assertSame(['client.list'], $validator->validate($this->request($tokens['access_token']))->scopes);
+            $wrong = $resource === $this->config->resource ? $this->config->apiResource : $this->config->resource;
+            try {
+                (new TokenValidator($this->config->forResource($wrong), $this->store))->validate($this->request($tokens['access_token']));
+                self::fail('Token must not work at another resource');
+            } catch (OAuthServerException $error) { self::assertStringContainsString('resource', $error->getHint()); }
+            $refresh = ['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $tokens['refresh_token']];
+            self::assertSame(400, $this->exchange($refresh + ['resource' => $wrong])->getStatusCode());
+            $response = $this->exchange($refresh);
+            self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+            $tokens = json_decode((string) $response->getBody(), true);
+            self::assertSame(['client.list'], $validator->validate($this->request($tokens['access_token']))->scopes);
+            // Revocation must support direct non-default audience tokens too.
+            $response = $this->provider->revoke((new ServerRequest())->withParsedBody(['client_id' => 'codex', 'token' => $tokens['access_token']]));
+            self::assertSame(200, $response->getStatusCode());
+            $this->expectRevoked($validator, $tokens['access_token']);
+        }
+    }
+    private function expectRevoked(TokenValidator $validator, string $token): void
+    {
+        try { $validator->validate($this->request($token)); self::fail('Token must be revoked'); }
+        catch (OAuthServerException) { self::assertTrue(true); }
+    }
+    public function testAuthorizationCodeCannotChangeResourceAndFailedExchangeDoesNotConsumeCode(): void
+    {
+        $this->enableMultipleResources();
+        $params = $this->codeForResource($this->config->apiResource);
+        self::assertSame(400, $this->exchange($params + ['resource' => $this->config->resource])->getStatusCode());
+        $response = $this->exchange($params + ['resource' => $this->config->apiResource]);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $tokens = json_decode((string) $response->getBody(), true);
+        (new TokenValidator($this->config->forResource($this->config->apiResource), $this->store))->validate($this->request($tokens['access_token']));
+    }
+    public function testUntrustedMalformedAndTrailingSlashResourcesAreRejected(): void
+    {
+        $this->enableMultipleResources();
+        foreach (['https://evil.example.com/', ['https://api.example.com/'], '', 'https://api.example.com', false] as $resource) {
+            self::assertSame(400, $this->authorization(['resource' => $resource])->getStatusCode());
+            self::assertSame(400, $this->exchange(['grant_type' => 'authorization_code', 'resource' => $resource])->getStatusCode());
+        }
+    }
+    public function testResourceSelectionDoesNotLeakBetweenRequests(): void
+    {
+        $this->enableMultipleResources();
+        $api = $this->codeForResource($this->config->apiResource);
+        $mcp = $this->codeForResource($this->config->resource);
+        foreach ([$api, $mcp, $this->codeForResource($this->config->resource)] as $index => $params) {
+            $response = $this->exchange($params);
+            self::assertSame(200, $response->getStatusCode());
+            $tokens = json_decode((string) $response->getBody(), true);
+            $resource = $index === 0 ? $this->config->apiResource : $this->config->resource;
+            (new TokenValidator($this->config->forResource($resource), $this->store))->validate($this->request($tokens['access_token']));
+        }
+    }
+    public function testOmittedAndLegacyResourceKeepDefaultAudience(): void
+    {
+        $this->enableMultipleResources();
+        $response = $this->authorization();
+        parse_str(parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        // Model a code issued before the resource field existed.
+        foreach ($this->store->records['auth_code'] as &$record) unset($record['resource']);
+        unset($record);
+        $params = ['grant_type' => 'authorization_code', 'client_id' => 'codex', 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'code' => $query['code'], 'code_verifier' => $this->verifier];
+        self::assertSame(400, $this->exchange($params + ['resource' => $this->config->apiResource])->getStatusCode());
+        $response = $this->exchange($params);
+        self::assertSame(200, $response->getStatusCode());
+        $tokens = json_decode((string) $response->getBody(), true);
+        $this->provider->validator()->validate($this->request($tokens['access_token']));
+        foreach ($this->store->records['refresh_token'] as &$record) unset($record['resource']);
+        unset($record);
+        $response = $this->exchange(['grant_type' => 'refresh_token', 'client_id' => 'codex', 'refresh_token' => $tokens['refresh_token'], 'resource' => $this->config->resource]);
+        self::assertSame(200, $response->getStatusCode());
+        $tokens = json_decode((string) $response->getBody(), true);
+        $this->provider->validator()->validate($this->request($tokens['access_token']));
+        $selection = new \Light\OAuth2\ResourceSelection($this->config);
+        $selection->begin([]);
+        self::assertSame($this->config->resource, $selection->resource());
+    }
+    public function testRepeatedResourcesAreRejectedInQueryAndFormBody(): void
+    {
+        $this->enableMultipleResources();
+        $raw = 'resource=' . urlencode($this->config->resource) . '&resource=' . urlencode($this->config->apiResource);
+        $request = (new ServerRequest())->withUri(new \Laminas\Diactoros\Uri('https://auth.example.com/oauth/authorize?' . $raw))->withQueryParams(['resource' => $this->config->apiResource]);
+        self::assertSame(400, $this->provider->authorize($request)->getStatusCode());
+        $request = (new ServerRequest())->withParsedBody(['grant_type' => 'authorization_code', 'resource' => $this->config->apiResource]);
+        $body = new \Laminas\Diactoros\Stream('php://temp', 'r+');
+        $body->write($raw);
+        $request = $request->withBody($body);
+        self::assertSame(400, $this->provider->token($request)->getStatusCode());
+    }
     private function authorization(array $changes = []): ResponseInterface
     {
         $params = array_replace(['response_type' => 'code', 'client_id' => 'codex', 'redirect_uri' => 'http://127.0.0.1:5555/callback', 'scope' => 'client.list', 'state' => 'random-test-state', 'code_challenge' => rtrim(strtr(base64_encode(hash('sha256', $this->verifier, true)), '+/', '-_'), '='), 'code_challenge_method' => 'S256', 'resource' => $this->config->resource], $changes);

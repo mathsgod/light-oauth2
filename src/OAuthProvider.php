@@ -13,6 +13,8 @@ use Psr\Http\Message\{ServerRequestInterface, ResponseInterface};
 final class OAuthProvider
 {
     private AuthorizationServer $server;
+    private ResourceSelection $resources;
+    private ResourceRegistry $registry;
     private ScopeRepository $scopes;
     private RevocationEndpoint $revocation;
     private TokenValidator $validator;
@@ -22,31 +24,33 @@ final class OAuthProvider
     private ?DynamicClientRegistrationEndpoint $registration = null;
     public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow, private ?TokenExchangePolicy $exchangePolicy = null, ?ClientMetadata\MetadataFetcher $metadataFetcher = null)
     {
+        $this->registry = new ResourceRegistry($config, $store);
         if ($config->cimdEnabled && $metadataFetcher === null && !extension_loaded('curl')) {
             throw new \LogicException('CIMD requires ext-curl');
         }
         if ($config->dcrEnabled) {
             if (!$store instanceof Contract\ClientStore) throw new \LogicException('DCR requires a ClientStore with insert-only createClient support');
-            $this->registration = new DynamicClientRegistrationEndpoint($store, $permissions);
+            $this->registration = new DynamicClientRegistrationEndpoint($store, $permissions, $this->registry);
         }
         $clients = $this->clients = new ClientMetadata\ClientResolver($store, $permissions->scopes(),
-            $config->cimdEnabled ? ($metadataFetcher ?? new ClientMetadata\HttpsMetadataFetcher()) : null);
-        $this->scopes = new ScopeRepository($permissions);
-        $this->server = new AuthorizationServer(new ClientRepository($store, $clients), new AccessTokenRepository($store, $config, $clients), $this->scopes, $config->privateKey, $config->encryptionKey, new Response\TokenResponse());
+            $config->cimdEnabled ? ($metadataFetcher ?? new ClientMetadata\HttpsMetadataFetcher()) : null, $this->registry);
+        $this->resources = new ResourceSelection($config, $this->registry);
+        $this->scopes = new ScopeRepository($permissions, $this->registry, $this->resources);
+        $this->server = new AuthorizationServer(new ClientRepository($store, $clients), new AccessTokenRepository($store, $config, $clients, $this->resources, $this->registry), $this->scopes, $config->privateKey, $config->encryptionKey, new Response\TokenResponse());
         if (!$store instanceof Contract\RefreshTokenStore) throw new \LogicException('OAuth stores must implement RefreshTokenStore for refresh replay protection');
-        $refresh = $this->refresh = new RefreshTokenRepository($store);
-        $grant = new AuthCodeGrant(new AuthCodeRepository($store), $refresh, new \DateInterval($config->codeTtl));
+        $refresh = $this->refresh = new RefreshTokenRepository($store, $this->resources);
+        $grant = new AuthCodeGrant(new AuthCodeRepository($store, $this->resources), $refresh, new \DateInterval($config->codeTtl));
         $grant->setRefreshTokenTTL(new \DateInterval($config->refreshTokenTtl));
         $this->server->enableGrantType($grant, new \DateInterval($config->accessTokenTtl));
         $grant = new RefreshTokenGrant($refresh);
         $grant->setRefreshTokenTTL(new \DateInterval($config->refreshTokenTtl));
         $this->server->enableGrantType($grant, new \DateInterval($config->accessTokenTtl));
-        $this->validator = new TokenValidator($config, $store, $clients);
-        $this->apiValidator = $config->apiResource === null ? $this->validator : new TokenValidator($config->forResource($config->apiResource), $store, $clients);
+        $this->validator = new TokenValidator($config, $store, $clients, $this->registry);
+        $this->apiValidator = $config->apiResource === null ? $this->validator : new TokenValidator($config->forResource($config->apiResource), $store, $clients, $this->registry);
         if ($exchangePolicy !== null) {
-            $this->server->enableGrantType(new Grant\TokenExchangeGrant($config, $store, $this->validator, $exchangePolicy), new \DateInterval($exchangePolicy->ttl));
+            $this->server->enableGrantType(new Grant\TokenExchangeGrant($config, $store, $this->validator, $exchangePolicy, $this->resources), new \DateInterval($exchangePolicy->ttl));
         }
-        $this->revocation = new RevocationEndpoint($config, $store, $this->validator, $clients);
+        $this->revocation = new RevocationEndpoint($config, $store, $this->validator, $clients, $this->registry);
     }
     public function registerClient(ServerRequestInterface $request): ResponseInterface
     {
@@ -58,13 +62,17 @@ final class OAuthProvider
     {
         try {
             $params = $request->getQueryParams();
-            $this->validateResource($params);
+            $this->resources->begin($params, $request->getUri()->getQuery());
             // Require PKCE S256 for every client, including confidential clients.
             if (($params['code_challenge_method'] ?? null) !== 'S256' || !is_string($params['code_challenge'] ?? null)) throw OAuthServerException::invalidRequest('code_challenge_method', 'S256 PKCE required');
             if (!is_string($params['state'] ?? null) || $params['state'] === '') throw OAuthServerException::invalidRequest('state');
+            $this->registry->assertResource($this->resources->resource());
             $authorization = $this->server->validateAuthorizationRequest($request);
+            $client = $authorization->getClient();
+            if (!$client instanceof Entity\Client) throw OAuthServerException::invalidClient($request);
+            $this->registry->assertClient($client->record, $this->resources->resource());
             $automatic = $this->config->autoSelectScopes && !array_key_exists('scope', $params)
-                ? new AutomaticScopes($this->permissions) : null;
+                ? new AutomaticScopes($this->permissions, $this->registry->scopes($this->resources->resource(), $this->permissions->scopes())) : null;
             if ($automatic !== null) $request = $request->withAttribute(AutomaticScopes::class, $automatic);
             $request = $request->withAttribute(ScopeRepository::class, $this->scopes);
             $offeredScopeIds = array_map(fn($scope): string => $scope->getIdentifier(), $authorization->getScopes());
@@ -81,13 +89,15 @@ final class OAuthProvider
             $authorization->setAuthorizationApproved($decision->approved);
             return $this->noStore($this->server->completeAuthorizationRequest($authorization, new \Laminas\Diactoros\Response()));
         } catch (OAuthServerException $error) { return $this->noStore($error->generateHttpResponse(new \Laminas\Diactoros\Response())); }
+        finally { $this->resources->reset(); }
     }
     public function token(ServerRequestInterface $request): ResponseInterface
     {
+        $this->resources->reset();
         try {
             $params = $request->getParsedBody();
             if (!is_array($params)) throw OAuthServerException::invalidRequest('grant_type');
-            if (($params['grant_type'] ?? null) !== Grant\TokenExchangeGrant::IDENTIFIER || $this->exchangePolicy === null) $this->validateResource($params);
+            if (($params['grant_type'] ?? null) !== Grant\TokenExchangeGrant::IDENTIFIER || $this->exchangePolicy === null) $this->resources->begin($params, (string) $request->getBody());
             $this->refresh->reset();
             $response = $this->store->transaction(function () use ($request) {
                 try { return $this->server->respondToAccessTokenRequest($request, new \Laminas\Diactoros\Response()); }
@@ -98,11 +108,7 @@ final class OAuthProvider
             if ($response instanceof Exception\RefreshTokenReuse) throw OAuthServerException::invalidRefreshToken('Refresh token reuse detected');
             return $this->noStore($response);
         } catch (OAuthServerException $error) { return $this->noStore($error->generateHttpResponse(new \Laminas\Diactoros\Response())); }
-        finally { $this->refresh->reset(); }
-    }
-    private function validateResource(array $params): void
-    {
-        if (isset($params['resource']) && $params['resource'] !== $this->config->resource) throw OAuthServerException::invalidRequest('resource', 'Unsupported resource');
+        finally { $this->refresh->reset(); $this->resources->reset(); }
     }
     private function noStore(ResponseInterface $response): ResponseInterface
     {
@@ -132,11 +138,19 @@ final class OAuthProvider
     public function register(\Light\App $app, callable $loadUser): void
     {
         if (!method_exists($app, 'getRouter') || !method_exists($app, 'setAuthServiceFactory')) throw new \LogicException('Use a Light version with OAuth extension points: getRouter(), setAuthServiceFactory() and createAuthService()');
+        if ($this->registry->enabled()) {
+            $manager = new Management\ResourceManager($this->store, $this->permissions);
+            $app->getContainer()->add(Controller\OAuthResourceController::class, new Controller\OAuthResourceController($manager));
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Controller');
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');
+            $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Input');
+            if (method_exists($app, 'addPermissions')) $app->addPermissions(['oauth_resource.list', 'oauth_resource.add', 'oauth_resource.update', 'oauth_resource.delete']);
+        }
         if ($this->store instanceof Contract\ClientStore) {
             if (!interface_exists(\Light\GraphQL\ExplicitController::class)) {
                 throw new \LogicException('OAuth client management requires Light explicit controller registration support');
             }
-            $manager = new Management\ClientManager($this->store, $this->permissions);
+            $manager = new Management\ClientManager($this->store, $this->permissions, $this->registry);
             $app->getContainer()->add(\Light\OAuth2\Controller\OAuthClientController::class, new \Light\OAuth2\Controller\OAuthClientController($manager));
             $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Controller');
             $app->getSchemaFactory()->addNamespace('Light\\OAuth2\\Type');

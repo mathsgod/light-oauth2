@@ -18,8 +18,14 @@ final readonly class Config
         public bool $dcrEnabled = false,
         public bool $autoSelectScopes = false,
         public ?string $authorizationUiUrl = null,
+        public array $additionalResources = [],
+        public bool $resourceRegistryEnabled = false,
     ) {
-        foreach ($apiResource === null ? [$issuer, $resource] : [$issuer, $resource, $apiResource] as $url) {
+        foreach ($additionalResources as $value) {
+            if (!is_string($value)) throw new \InvalidArgumentException('Resources must be URL strings');
+        }
+        foreach ([$issuer, ...$this->resources()] as $url) {
+            if (!is_string($url)) throw new \InvalidArgumentException('Resources must be URL strings');
             $parts = parse_url($url);
             if (!$parts || empty($parts['host']) || isset($parts['fragment']) || isset($parts['query']) || isset($parts['user']) ||
                 (($parts['scheme'] ?? '') !== 'https' && !(($parts['scheme'] ?? '') === 'http' && in_array($parts['host'], ['localhost', '127.0.0.1', '[::1]'], true)))) {
@@ -40,10 +46,15 @@ final readonly class Config
             if ($interval->invert || (new \DateTimeImmutable())->add($interval) <= new \DateTimeImmutable()) throw new \InvalidArgumentException('TTL must be positive');
         }
     }
+    /** Allowed single audiences for direct authorization; the default remains resource. */
+    public function resources(): array
+    {
+        return array_values(array_unique([$this->resource, ...($this->apiResource === null ? [] : [$this->apiResource]), ...$this->additionalResources], SORT_STRING));
+    }
     public function endpoint(string $name): string { return rtrim($this->issuer, '/') . $this->routePrefix . '/' . $name; }
     /** Keep issuer/keys/settings while selecting the audience validated by a resource server. */
     public function forResource(string $resource): self
     {
-        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled, $this->autoSelectScopes, $this->authorizationUiUrl);
+        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled, $this->autoSelectScopes, $this->authorizationUiUrl, $this->additionalResources, $this->resourceRegistryEnabled);
     }
 }

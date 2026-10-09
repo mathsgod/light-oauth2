@@ -100,3 +100,7 @@ codex mcp login hostlink --scopes client.list --oauth-client-registration dcr
 
 When both DCR and CIMD are enabled, the client selects its supported registration method;
 there is no need to manually create its DCR client record.
+
+## Resource registry
+
+With `OAUTH_RESOURCE_REGISTRY_ENABLED=true`, the custom `resources` metadata list selects administrator-registered, enabled resources. Omission grants only the default resource; metadata never creates new resource records. See [resource policy and registration examples](RESOURCES.md).

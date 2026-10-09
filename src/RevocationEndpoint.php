@@ -11,7 +11,7 @@ use Defuse\Crypto\Crypto;
 use Defuse\Crypto\Exception\WrongKeyOrModifiedCiphertextException;
 final class RevocationEndpoint
 {
-    public function __construct(private Config $config, private Store $store, private TokenValidator $validator, private ?ClientMetadata\ClientResolver $clients = null) {}
+    public function __construct(private Config $config, private Store $store, private TokenValidator $validator, private ?ClientMetadata\ClientResolver $clients = null, private ?ResourceRegistry $registry = null) {}
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
         try {
@@ -56,8 +56,8 @@ final class RevocationEndpoint
         $payload = json_decode(base64_decode(strtr(explode('.', $token)[1], '-_', '+/')), true);
         $id = is_array($payload) ? ($payload['jti'] ?? null) : null;
         $record = is_string($id) ? $this->store->record('access_token', $id) : null;
-        if ($record && isset($record['exchange_subject'], $record['resource'])) {
-            return new TokenValidator($this->config->forResource($record['resource']), $this->store, $this->clients);
+        if ($record && isset($record['resource'])) {
+            return new TokenValidator($this->config->forResource($record['resource']), $this->store, $this->clients, $this->registry);
         }
         return $this->validator;
     }

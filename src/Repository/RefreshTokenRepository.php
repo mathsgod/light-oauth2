@@ -10,12 +10,12 @@ use Light\OAuth2\Entity\RefreshToken;
 final class RefreshTokenRepository implements RefreshTokenRepositoryInterface
 {
     private ?string $familyId = null;
-    public function __construct(private RefreshTokenStore $store) {}
+    public function __construct(private RefreshTokenStore $store, private ?\Light\OAuth2\ResourceSelection $resources = null) {}
     public function reset(): void { $this->familyId = null; }
     public function getNewRefreshToken(): ?RefreshTokenEntityInterface { return new RefreshToken(); }
     public function persistNewRefreshToken(RefreshTokenEntityInterface $token): void
     {
-        $this->store->insert('refresh_token', $token->getIdentifier(), ['expires_at' => $token->getExpiryDateTime()->getTimestamp(), 'revoked' => false, 'access_token_id' => $token->getAccessToken()->getIdentifier(), 'family_id' => $this->familyId ?? $token->getIdentifier(), 'used_at' => null]);
+        $this->store->insert('refresh_token', $token->getIdentifier(), ['expires_at' => $token->getExpiryDateTime()->getTimestamp(), 'revoked' => false, 'access_token_id' => $token->getAccessToken()->getIdentifier(), 'resource' => $token->getAccessToken() instanceof \Light\OAuth2\Entity\AccessToken ? $token->getAccessToken()->resource() : null, 'family_id' => $this->familyId ?? $token->getIdentifier(), 'used_at' => null]);
     }
     public function revokeRefreshToken(string $tokenId): void
     {
@@ -33,6 +33,10 @@ final class RefreshTokenRepository implements RefreshTokenRepositoryInterface
             $this->store->revokeRefreshTokenFamily($record['family_id'] ?? $tokenId);
             throw new RefreshTokenReuse('Refresh token was already used');
         }
-        return !$record || $record['revoked'] || $record['expires_at'] <= time();
+        if (!$record || $record['revoked'] || $record['expires_at'] <= time()) return true;
+        $access = $this->store->record('access_token', $record['access_token_id']);
+        if (!$access) return true;
+        $this->resources?->bind($record['resource'] ?? $access['resource'] ?? null);
+        return false;
     }
 }

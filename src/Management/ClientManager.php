@@ -7,7 +7,7 @@ use Light\OAuth2\Type\{OAuthClient, OAuthClientSaved};
 
 final class ClientManager
 {
-    public function __construct(private ClientStore $store, private PermissionProvider $permissions) {}
+    public function __construct(private ClientStore $store, private PermissionProvider $permissions, private ?\Light\OAuth2\ResourceRegistry $registry = null) {}
 
     /** @return OAuthClient[] */
     public function clients(): array
@@ -31,6 +31,13 @@ final class ClientManager
             'scopes' => array_values(array_unique($input->scopes)),
             'confidential' => $input->confidential, 'enabled' => $input->enabled,
         ];
+        $resources = $input->resources ?? $existing['resources'] ?? null;
+        if ($this->registry?->enabled()) {
+            $record['resources'] = $this->registry->clientResources($resources);
+            if (array_diff($record['scopes'], $this->registry->registrationScopes($record['resources'], $this->scopes()))) throw new \InvalidArgumentException('Scope is not allowed by the selected resources');
+        } elseif ($resources !== null) {
+            $record['resources'] = $resources;
+        }
         if ($input->confidential) $record['secret_hash'] = $secret !== null ? password_hash($secret, PASSWORD_DEFAULT) : $existing['secret_hash'];
         if ($create) $this->store->createClient($record);
         else $this->store->saveClient($record);
