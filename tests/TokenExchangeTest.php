@@ -4,7 +4,7 @@ namespace Light\OAuth2\Tests;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
-use Light\OAuth2\{Config, OAuthProvider, TokenExchangePolicy};
+use Light\OAuth2\{Config, OAuthProvider};
 use Light\OAuth2\Auth\TokenValidator;
 use Light\OAuth2\Contract\{PermissionProvider, AuthorizationFlow, AuthorizationDecision};
 use Light\OAuth2\Grant\TokenExchangeGrant;
@@ -53,14 +53,9 @@ final class TokenExchangeTest extends TestCase
         $this->store->seedResources([self::MCP, self::API], $this->permissions->scopes());
         foreach ($this->store->clients as &$client) $client['resources'] = [self::MCP, self::API];
         unset($client);
-        $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow, $this->policy());
+        $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
         $this->subject = $this->mint($this->config);
         $this->subjectId = $this->provider->validator()->validate($this->bearer($this->subject))->tokenId;
-    }
-
-    private function policy(): TokenExchangePolicy
-    {
-        return new TokenExchangePolicy(['mcp' => ['source' => self::MCP, 'targets' => [self::API => ['client.list']]]]);
     }
 
     /** Mint a real signed, persisted source token without browser interaction. */
@@ -107,7 +102,7 @@ final class TokenExchangeTest extends TestCase
         $token->setPrivateKey(new CryptKey($config->privateKey));
         $repo->persistNewAccessToken($token);
         $this->subject = $token->toString();
-        $this->provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow, $this->policy(), $fetcher);
+        $this->provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow, $fetcher);
         $response = $this->exchange();
         self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $validator = new TokenValidator($config->forResource(self::API), $this->store, $clients);
@@ -119,6 +114,50 @@ final class TokenExchangeTest extends TestCase
         $this->store->saveClient($record);
         $this->expectException(OAuthServerException::class);
         $validator->validate($this->bearer($access));
+    }
+
+    public function testDcrUsersTokenCanBeExchangedByConfidentialMcpClient(): void
+    {
+        $config = new Config($this->config->issuer, self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), dcrEnabled: true);
+        $provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow);
+        $body = new \Laminas\Diactoros\Stream('php://temp', 'w+b');
+        $body->write(json_encode(['client_name' => 'DCR user client', 'redirect_uris' => ['http://127.0.0.1/callback'], 'token_endpoint_auth_method' => 'none', 'resources' => [self::MCP], 'scope' => 'client.list']));
+        $registered = $provider->registerClient((new ServerRequest())->withMethod('POST')->withHeader('Content-Type', 'application/json')->withBody($body));
+        self::assertSame(201, $registered->getStatusCode(), (string) $registered->getBody());
+        $clientId = $this->body($registered)['client_id'];
+        $verifier = str_repeat('v', 64);
+        $authorization = $provider->authorize((new ServerRequest())->withQueryParams([
+            'response_type' => 'code', 'client_id' => $clientId, 'redirect_uri' => 'http://127.0.0.1/callback',
+            'resource' => self::MCP, 'scope' => 'client.list', 'state' => 'test',
+            'code_challenge_method' => 'S256', 'code_challenge' => rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '='),
+        ]));
+        self::assertSame(302, $authorization->getStatusCode(), (string) $authorization->getBody());
+        parse_str(parse_url($authorization->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        $tokens = $provider->token((new ServerRequest())->withParsedBody([
+            'grant_type' => 'authorization_code', 'client_id' => $clientId, 'redirect_uri' => 'http://127.0.0.1/callback',
+            'code' => $query['code'], 'code_verifier' => $verifier,
+        ]));
+        self::assertSame(200, $tokens->getStatusCode(), (string) $tokens->getBody());
+        $source = $this->body($tokens)['access_token'];
+        $response = $provider->token((new ServerRequest())->withParsedBody($this->params(['subject_token' => $source])));
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $context = (new TokenValidator($config->forResource(self::API), $this->store))->validate($this->bearer($this->body($response)['access_token']));
+        self::assertSame('27', $context->userId);
+        self::assertSame('mcp', $context->clientId);
+        self::assertSame(['client.list'], $context->scopes);
+        $this->assertRejected($provider->token((new ServerRequest())->withParsedBody($this->params(['client_id' => $clientId, 'subject_token' => $source]))), 'invalid_client');
+    }
+
+    public function testExchangeTtlIsConfigurableWithoutPolicy(): void
+    {
+        $config = new Config($this->config->issuer, self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), exchangeTokenTtl: 'PT2M');
+        self::assertSame('PT2M', $config->forResource(self::API)->exchangeTokenTtl);
+        $provider = new OAuthProvider($config, $this->store, $this->permissions, $this->flow);
+        $response = $provider->token((new ServerRequest())->withParsedBody($this->params()));
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        self::assertLessThanOrEqual(120, $this->body($response)['expires_in']);
+        $this->expectException(\InvalidArgumentException::class);
+        new Config($this->config->issuer, self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32), exchangeTokenTtl: 'PT0S');
     }
 
     public function testExchangePreservesUserAndBindsTokenToApi(): void
@@ -151,10 +190,10 @@ final class TokenExchangeTest extends TestCase
         (new TokenValidator($this->config->forResource(self::API), $this->store))->validate($this->bearer($this->subject));
     }
 
-    public function testBasicAuthenticationAndDefaultTargetAndScopes(): void
+    public function testBasicAuthenticationAndDefaultScopes(): void
     {
         $params = $this->params();
-        unset($params['client_id'], $params['client_secret'], $params['resource'], $params['scope']);
+        unset($params['client_id'], $params['client_secret'], $params['scope']);
         $request = (new ServerRequest())->withParsedBody($params)->withHeader('Authorization', 'Basic ' . base64_encode('mcp:secret'));
         $response = $this->provider->token($request);
         self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
@@ -174,7 +213,6 @@ final class TokenExchangeTest extends TestCase
         yield 'wrong secret' => [['client_secret' => 'wrong'], 'invalid_client'];
         yield 'unknown client' => [['client_id' => 'missing'], 'invalid_client'];
         yield 'public client' => [['client_id' => 'codex'], 'invalid_client'];
-        yield 'untrusted confidential client' => [['client_id' => 'other'], 'unauthorized_client'];
         yield 'target not allowed' => [['resource' => 'https://evil.example.com'], 'invalid_target'];
         yield 'conflicting audience' => [['audience' => self::MCP], 'invalid_target'];
         yield 'malformed subject' => [['subject_token' => 'not-a-jwt'], 'invalid_request'];
@@ -225,6 +263,8 @@ final class TokenExchangeTest extends TestCase
     public function testWrongIssuerAudienceAndSignatureAreRejected(): void
     {
         $this->subject = $this->mint($this->config->forResource(self::API));
+        $tokenId = (new TokenValidator($this->config->forResource(self::API), $this->store))->validate($this->bearer($this->subject))->tokenId;
+        $this->store->records['access_token'][$tokenId]['resource'] = self::MCP;
         $this->assertRejected($this->exchange(), 'invalid_request');
         $other = new Config('https://other.example.com', self::MCP, self::$privateKey, self::$publicKey, str_repeat('x', 32));
         $this->subject = $this->mint($other);
@@ -324,23 +364,17 @@ final class TokenExchangeTest extends TestCase
         self::assertFalse($context->can('client.list', $this->permissions));
     }
 
-    public function testDefaultProviderDoesNotEnableOrAdvertiseExchange(): void
+    public function testDefaultProviderEnablesAndAdvertisesExchangeWithoutPolicy(): void
     {
-        $provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
-        self::assertNotContains(TokenExchangeGrant::IDENTIFIER, $this->body($provider->metadata(new ServerRequest()))['grant_types_supported']);
-        $params = $this->params();
-        unset($params['resource']);
-        $this->assertRejected($provider->token((new ServerRequest())->withParsedBody($params)), 'unsupported_grant_type');
         self::assertContains(TokenExchangeGrant::IDENTIFIER, $this->body($this->provider->metadata(new ServerRequest()))['grant_types_supported']);
+        self::assertSame(200, $this->exchange(['client_id' => 'other'])->getStatusCode());
     }
 
-    public function testNoDefaultWhenMultipleTargetsAreConfigured(): void
+    public function testTargetMustBeSelectedExplicitly(): void
     {
-        $policy = new TokenExchangePolicy(['mcp' => ['source' => self::MCP, 'targets' => [self::API => ['client.list'], 'https://other.example.com' => ['client.list']]]]);
-        $provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow, $policy);
         $params = $this->params();
         unset($params['resource']);
-        $this->assertRejected($provider->token((new ServerRequest())->withParsedBody($params)), 'invalid_target');
+        $this->assertRejected($this->provider->token((new ServerRequest())->withParsedBody($params)), 'invalid_target');
     }
 
     public function testMultipleExchangesDoNotConsumeSourceOrLeakTargetState(): void
@@ -348,8 +382,7 @@ final class TokenExchangeTest extends TestCase
         $secondTarget = 'https://other.example.com/graphql';
         $this->store->seedResources([$secondTarget], $this->permissions->scopes());
         $client = $this->store->client('mcp'); $client['resources'][] = $secondTarget; $this->store->saveClient($client);
-        $policy = new TokenExchangePolicy(['mcp' => ['source' => self::MCP, 'targets' => [self::API => ['client.list'], $secondTarget => ['client.list']]]]);
-        $provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow, $policy);
+        $provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow);
         foreach ([self::API, $secondTarget, self::API] as $target) {
             $response = $provider->token((new ServerRequest())->withParsedBody($this->params(['resource' => $target])));
             self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
@@ -366,29 +399,72 @@ final class TokenExchangeTest extends TestCase
         self::assertSame($before, $this->store->records);
     }
 
-    public function testPolicyCannotExchangeTokensFromAnotherSourceResource(): void
+    public function testCallerMustBeAssignedBothSourceAndTarget(): void
     {
-        $policy = new TokenExchangePolicy(['mcp' => ['source' => 'https://another-mcp.example.com', 'targets' => [self::API => ['client.list']]]]);
-        $provider = new OAuthProvider($this->config, $this->store, $this->permissions, $this->flow, $policy);
-        $this->assertRejected($provider->token((new ServerRequest())->withParsedBody($this->params())), 'unauthorized_client');
+        $client = $this->store->client('mcp');
+        foreach ([[self::MCP], [self::API]] as $resources) {
+            $client['resources'] = $resources;
+            $this->store->saveClient($client);
+            $this->assertRejected($this->exchange(), 'invalid_target');
+        }
     }
 
-    public static function invalidPolicies(): iterable
+    public function testRegisteredSourceOutsideDefaultAudienceCanBeExchanged(): void
     {
-        yield 'source target identical' => [['mcp' => ['source' => self::MCP, 'targets' => [self::MCP => ['client.list']]]]];
-        yield 'fragment target' => [['mcp' => ['source' => self::MCP, 'targets' => [self::API . '#fragment' => ['client.list']]]]];
-        yield 'non-loopback HTTP target' => [['mcp' => ['source' => self::MCP, 'targets' => ['http://api.example.com' => ['client.list']]]]];
-        yield 'missing source' => [['mcp' => ['targets' => [self::API => ['client.list']]]]];
-        yield 'no targets' => [['mcp' => ['source' => self::MCP, 'targets' => []]]];
-        yield 'no scopes' => [['mcp' => ['source' => self::MCP, 'targets' => [self::API => []]]]];
-        yield 'scope with whitespace' => [['mcp' => ['source' => self::MCP, 'targets' => [self::API => ['client list']]]]];
+        $source = 'https://another-mcp.example.com/mcp';
+        $this->store->seedResources([$source], ['client.list']);
+        foreach (['codex', 'mcp'] as $id) {
+            $client = $this->store->client($id);
+            $client['resources'][] = $source;
+            $this->store->saveClient($client);
+        }
+        $this->subject = $this->mint($this->config->forResource($source));
+        self::assertSame(200, $this->exchange()->getStatusCode());
+        $this->expectException(OAuthServerException::class);
+        // Accepting a source for exchange does not broaden normal API authentication.
+        $this->provider->validator()->validate($this->bearer($this->subject));
     }
 
-    #[DataProvider('invalidPolicies')]
-    public function testInvalidPolicyIsRejectedAtConfigurationTime(array $rules): void
+    public function testSameResourceAndDisabledResourcesAreRejected(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        new TokenExchangePolicy($rules);
+        $this->assertRejected($this->exchange(['resource' => self::MCP]), 'invalid_target');
+        $target = $this->store->resource(self::API);
+        $target['enabled'] = false;
+        $this->store->saveResource($target);
+        $this->assertRejected($this->exchange(), 'invalid_target');
+        $target['enabled'] = true;
+        $this->store->saveResource($target);
+        $source = $this->store->resource(self::MCP);
+        $source['enabled'] = false;
+        $this->store->saveResource($source);
+        $this->assertRejected($this->exchange(), 'invalid_request');
+    }
+
+    public function testDefaultScopesIntersectCallerAndTarget(): void
+    {
+        $client = $this->store->client('mcp');
+        $client['scopes'] = ['client.edit'];
+        $this->store->saveClient($client);
+        $params = $this->params();
+        unset($params['scope']);
+        $this->assertRejected($this->provider->token((new ServerRequest())->withParsedBody($params)), 'invalid_scope');
+        $client['scopes'] = ['client.list'];
+        $this->store->saveClient($client);
+        self::assertSame(200, $this->provider->token((new ServerRequest())->withParsedBody($params))->getStatusCode());
+        $target = $this->store->resource(self::API);
+        $target['scopes'] = ['client.edit'];
+        $this->store->saveResource($target);
+        $this->assertRejected($this->provider->token((new ServerRequest())->withParsedBody($params)), 'invalid_scope');
+    }
+
+    public function testRemovingCallersSourceAssignmentInvalidatesDerivedToken(): void
+    {
+        $data = $this->body($this->exchange());
+        $client = $this->store->client('mcp');
+        $client['resources'] = [self::API];
+        $this->store->saveClient($client);
+        $this->expectException(OAuthServerException::class);
+        (new TokenValidator($this->config->forResource(self::API), $this->store))->validate($this->bearer($data['access_token']));
     }
 
     /** Register the real provider/auth factory without management controllers or a database. */
@@ -400,7 +476,7 @@ final class TokenExchangeTest extends TestCase
         foreach (['resource', 'resources', 'createResource', 'saveResource', 'deleteResource', 'client', 'saveClient', 'record', 'insert', 'revoke', 'transaction', 'consumeRefreshToken', 'revokeRefreshTokenFamily'] as $method) {
             $store->method($method)->willReturnCallback(fn(...$args) => $this->store->$method(...$args));
         }
-        $provider = new OAuthProvider($config, $store, $this->permissions, $this->flow, $this->policy());
+        $provider = new OAuthProvider($config, $store, $this->permissions, $this->flow);
         $app = (new \ReflectionClass(\Light\App::class))->newInstanceWithoutConstructor();
         (new \ReflectionProperty(\Light\App::class, 'cache'))->setValue($app, $this->createStub(\Psr\SimpleCache\CacheInterface::class));
         $container = new \League\Container\Container();

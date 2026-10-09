@@ -12,12 +12,12 @@ OAuth 2.0 Authorization Code + S256 PKCE integration for Light, powered by Leagu
 - MySQL/MariaDB storage with transactional token exchange and row locks to serialize credential reuse.
 - Authorization-server and protected-resource metadata responses.
 - Resource-specific JWT audience, issuer validation, expiry/signature/revocation validation.
-- Opt-in database resource registry with per-resource scopes, client assignments and permission-protected GraphQL management.
+- Database resource registry with per-resource scopes, client assignments and permission-protected GraphQL management.
 - Light authentication adapter and permission scopes. Effective rights require token scope, client-allowed scope, OAuth-exposed scope and the user's current permission.
 - Default Light login/2FA and consent pages, with customizable `AuthorizationFlow`.
-- Opt-in RFC 8693 access-token exchange with confidential-client authentication, explicit source/target allowlists and scope narrowing.
+- RFC 8693 access-token exchange with confidential-client authentication, registered source/target resource assignments and scope narrowing.
 
-This package does not supply confidential-client DCR, RFC 7592 registration management, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each authorization selects one configured resource. See [direct API authorization and resource binding](docs/RESOURCES.md). Token exchange is optional and retains its separate source/target policy.
+This package does not supply confidential-client DCR, RFC 7592 registration management, OpenID Connect, or a complete Codex-to-MCP-to-GraphQL deployment. Those application integrations remain separate. Each authorization selects one configured resource. See [direct API authorization and resource binding](docs/RESOURCES.md). Token exchange uses confidential-client resource assignments and scopes; no separate exchange policy is needed.
 
 ### Refresh token replay protection
 
@@ -56,7 +56,7 @@ For direct client access to GraphQL, see [resource selection](docs/RESOURCES.md)
 
 For service-to-service access on behalf of a user (including MCP to GraphQL), see [access-token exchange](docs/TOKEN_EXCHANGE.md).
 
-Light GraphQL applications can set `OAUTH_API_RESOURCE` for the API token audience and `OAUTH_TOKEN_EXCHANGE_POLICY` for the exchange allowlist. `ProviderFactory::registerFromEnvironment($app)` installs the built-in token validation and scope-aware authentication; no application auth factory override is needed.
+Light GraphQL applications can set `OAUTH_API_RESOURCE` for the API token audience. Token exchange accepts explicitly requested targets assigned to the authenticated confidential client. `ProviderFactory::registerFromEnvironment($app)` installs the built-in token validation and scope-aware authentication; no application auth factory override is needed.
 
 1. `composer install`.
 2. Apply `migrations/001_oauth.sql` through the application's migration runner. Also apply `migrations/002_oauth_resources.sql`, register trusted resources and assign clients before enabling OAuth; see [resource setup](docs/RESOURCES.md).
@@ -72,7 +72,7 @@ Do not share the OAuth PDO connection with an already-open application transacti
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET / POST | `/oauth/authorize` | Validate OAuth parameters and delegate login/2FA/consent to the application |
-| POST | `/oauth/token` | Form-encoded authorization-code, refresh-token or opt-in RFC 8693 token exchange |
+| POST | `/oauth/token` | Form-encoded authorization-code, refresh-token or RFC 8693 token exchange |
 | POST | `/oauth/register` | Opt-in public client registration (DCR); accepts JSON |
 | POST | `/oauth/revoke` | Revoke a client-owned access or refresh token |
 | GET | `/.well-known/oauth-authorization-server` | Authorization server discovery |
@@ -144,7 +144,7 @@ The factory is enabled by `OAUTH_ENABLED=true`. It reads `OAUTH_ISSUER`,
 `OAUTH_RESOURCE`, `OAUTH_PRIVATE_KEY_PATH`, `OAUTH_PUBLIC_KEY_PATH`,
 `OAUTH_ENCRYPTION_KEY` and optional comma-separated `OAUTH_SCOPES`, and uses the Light
 `DATABASE_*` settings with a dedicated PDO connection. Optional settings are
-`OAUTH_CIMD_ENABLED`, `OAUTH_DCR_ENABLED`, `OAUTH_API_RESOURCE`, `OAUTH_TOKEN_EXCHANGE_POLICY` and
+`OAUTH_CIMD_ENABLED`, `OAUTH_DCR_ENABLED`, `OAUTH_API_RESOURCE` and
 `OAUTH_TOKEN_EXCHANGE_TTL`; see [.env.example](.env.example). The default browser flow
 reuses Light password and required 2FA checks, with explicit consent, one-time
 CSRF protection and CSP allowing the validated callback origin.

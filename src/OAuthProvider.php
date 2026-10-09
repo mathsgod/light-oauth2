@@ -22,7 +22,7 @@ final class OAuthProvider
     private RefreshTokenRepository $refresh;
     private ClientMetadata\ClientResolver $clients;
     private ?DynamicClientRegistrationEndpoint $registration = null;
-    public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow, private ?TokenExchangePolicy $exchangePolicy = null, ?ClientMetadata\MetadataFetcher $metadataFetcher = null)
+    public function __construct(private Config $config, private Store $store, private PermissionProvider $permissions, private AuthorizationFlow $flow, ?ClientMetadata\MetadataFetcher $metadataFetcher = null)
     {
         $this->registry = new ResourceRegistry($config, $store);
         if ($config->cimdEnabled && $metadataFetcher === null && !extension_loaded('curl')) {
@@ -47,9 +47,7 @@ final class OAuthProvider
         $this->server->enableGrantType($grant, new \DateInterval($config->accessTokenTtl));
         $this->validator = new TokenValidator($config, $store, $clients, $this->registry);
         $this->apiValidator = $config->apiResource === null ? $this->validator : new TokenValidator($config->forResource($config->apiResource), $store, $clients, $this->registry);
-        if ($exchangePolicy !== null) {
-            $this->server->enableGrantType(new Grant\TokenExchangeGrant($config, $store, $this->validator, $exchangePolicy, $this->resources), new \DateInterval($exchangePolicy->ttl));
-        }
+        $this->server->enableGrantType(new Grant\TokenExchangeGrant($config, $store, $this->validator, $this->registry, $this->resources), new \DateInterval($config->exchangeTokenTtl));
         $this->revocation = new RevocationEndpoint($config, $store, $this->validator, $clients, $this->registry);
     }
     public function registerClient(ServerRequestInterface $request): ResponseInterface
@@ -97,7 +95,7 @@ final class OAuthProvider
         try {
             $params = $request->getParsedBody();
             if (!is_array($params)) throw OAuthServerException::invalidRequest('grant_type');
-            if (($params['grant_type'] ?? null) !== Grant\TokenExchangeGrant::IDENTIFIER || $this->exchangePolicy === null) $this->resources->begin($params, (string) $request->getBody());
+            if (($params['grant_type'] ?? null) !== Grant\TokenExchangeGrant::IDENTIFIER) $this->resources->begin($params, (string) $request->getBody());
             $this->refresh->reset();
             $response = $this->store->transaction(function () use ($request) {
                 try { return $this->server->respondToAccessTokenRequest($request, new \Laminas\Diactoros\Response()); }
@@ -124,7 +122,7 @@ final class OAuthProvider
             'token_endpoint' => $this->config->endpoint('token'),
             'revocation_endpoint' => $this->config->endpoint('revoke'),
             'response_types_supported' => ['code'],
-            'grant_types_supported' => $this->exchangePolicy === null ? ['authorization_code', 'refresh_token'] : ['authorization_code', 'refresh_token', Grant\TokenExchangeGrant::IDENTIFIER],
+            'grant_types_supported' => ['authorization_code', 'refresh_token', Grant\TokenExchangeGrant::IDENTIFIER],
             'code_challenge_methods_supported' => ['S256'],
             'token_endpoint_auth_methods_supported' => ['none', 'client_secret_basic', 'client_secret_post'],
             'scopes_supported' => $this->permissions->scopes(),

@@ -33,6 +33,15 @@ final class TokenValidator
             throw OAuthServerException::accessDenied('Resource is disabled, missing or no longer allowed for this client');
         }
     }
+    /** Select the source audience from a verified, persisted local token, never from caller input. */
+    public function validateForExchange(ServerRequestInterface $request): TokenContext
+    {
+        $validated = $this->server->validateAuthenticatedRequest($request);
+        $record = $this->store->record('access_token', $validated->getAttribute('oauth_access_token_id'));
+        if (!$record || isset($record['exchange_subject'])) throw OAuthServerException::accessDenied('Invalid exchange source');
+        $resource = $record['resource'] ?? $this->config->resource;
+        return (new self($this->config->forResource($resource), $this->store, $this->clients, $this->registry))->validate($request);
+    }
     public function validate(ServerRequestInterface $request): TokenContext
     {
         $validated = $this->server->validateAuthenticatedRequest($request);
@@ -54,7 +63,9 @@ final class TokenValidator
             $sourceClient = $subject ? $this->client($subject['client_id']) : null;
             if (!$subject || !$sourceClient || empty($sourceClient['enabled'])) throw OAuthServerException::accessDenied('Invalid exchange source');
             $scopes = array_intersect($scopes, $subject['scopes'], $sourceClient['scopes']);
-            $scopes = $this->resourceScopes($sourceClient, $subject['resource'] ?? '', $scopes);
+            $sourceResource = $subject['resource'] ?? $this->registry->clientPolicy()->defaultResource;
+            $scopes = $this->resourceScopes($sourceClient, $sourceResource, $scopes);
+            $scopes = $this->resourceScopes($client, $sourceResource, $scopes);
         }
         return new TokenContext((string) $record['user_id'], $record['client_id'], $id, array_values($scopes), $token->claims()->get('exp')->getTimestamp());
     }

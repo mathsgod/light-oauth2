@@ -2,7 +2,7 @@
 declare(strict_types=1);
 namespace Light\OAuth2\Tests;
 use PHPUnit\Framework\TestCase;
-use Light\OAuth2\{Config, OAuthProvider, ResourceRegistry, TokenExchangePolicy};
+use Light\OAuth2\{Config, OAuthProvider, ResourceRegistry};
 use Light\OAuth2\Auth\TokenValidator;
 use Light\OAuth2\Contract\{PermissionProvider, AuthorizationFlow, AuthorizationDecision};
 use Light\OAuth2\Management\{ResourceManager, ClientManager};
@@ -52,7 +52,7 @@ final class ResourceRegistryTest extends TestCase
             }
         };
         $this->registry = new ResourceRegistry($this->config, $this->store);
-        $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $flow, new TokenExchangePolicy(['exchange' => ['source' => self::MCP, 'targets' => [self::API => ['client.list']]]]));
+        $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $flow);
         $this->verifier = str_repeat('v', 64);
     }
     public function testRegistryIsAlwaysRequiredAndEmptyCatalogRejectsConfiguredAudience(): void
@@ -254,7 +254,7 @@ final class ResourceRegistryTest extends TestCase
     public function testExchangeStillWorksButChecksTargetResourceAndScopes(): void
     {
         $tokens = $this->tokens(self::MCP);
-        $this->store->saveClient(['id' => 'exchange', 'name' => 'Exchange', 'redirect_uris' => ['https://client.example.com/callback'], 'scopes' => ['client.list'], 'confidential' => true, 'secret_hash' => password_hash('secret', PASSWORD_DEFAULT), 'enabled' => true, 'resources' => [self::API]]);
+        $this->store->saveClient(['id' => 'exchange', 'name' => 'Exchange', 'redirect_uris' => ['https://client.example.com/callback'], 'scopes' => ['client.list'], 'confidential' => true, 'secret_hash' => password_hash('secret', PASSWORD_DEFAULT), 'enabled' => true, 'resources' => [self::MCP, self::API]]);
         $params = ['grant_type' => TokenExchangeGrant::IDENTIFIER, 'client_id' => 'exchange', 'client_secret' => 'secret', 'subject_token' => $tokens['access_token'], 'subject_token_type' => TokenExchangeGrant::ACCESS_TOKEN_TYPE, 'resource' => self::API];
         $response = $this->exchange($params); self::assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         self::assertSame(['client.list'], $this->context(json_decode((string) $response->getBody(), true), self::API)->scopes);

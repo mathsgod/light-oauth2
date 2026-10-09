@@ -18,6 +18,7 @@ final readonly class Config
         public bool $dcrEnabled = false,
         public bool $autoSelectScopes = false,
         public ?string $authorizationUiUrl = null,
+        public string $exchangeTokenTtl = 'PT5M',
     ) {
         foreach ($apiResource === null ? [$issuer, $resource] : [$issuer, $resource, $apiResource] as $url) {
             if (!is_string($url)) throw new \InvalidArgumentException('Resources must be URL strings');
@@ -36,7 +37,7 @@ final readonly class Config
         }
         if (strlen($encryptionKey) < 32) throw new \InvalidArgumentException('Encryption key must be at least 32 characters');
         if (!preg_match('~^/[a-zA-Z0-9/_-]+$~', $routePrefix)) throw new \InvalidArgumentException('Invalid OAuth route prefix');
-        foreach ([$accessTokenTtl, $refreshTokenTtl, $codeTtl] as $ttl) {
+        foreach ([$accessTokenTtl, $refreshTokenTtl, $codeTtl, $exchangeTokenTtl] as $ttl) {
             $interval = new \DateInterval($ttl);
             if ($interval->invert || (new \DateTimeImmutable())->add($interval) <= new \DateTimeImmutable()) throw new \InvalidArgumentException('TTL must be positive');
         }
@@ -45,6 +46,6 @@ final readonly class Config
     /** Keep issuer/keys/settings while selecting the audience validated by a resource server. */
     public function forResource(string $resource): self
     {
-        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled, $this->autoSelectScopes, $this->authorizationUiUrl);
+        return new self($this->issuer, $resource, $this->privateKey, $this->publicKey, $this->encryptionKey, $this->routePrefix, $this->accessTokenTtl, $this->refreshTokenTtl, $this->codeTtl, $this->apiResource, $this->cimdEnabled, $this->dcrEnabled, $this->autoSelectScopes, $this->authorizationUiUrl, $this->exchangeTokenTtl);
     }
 }

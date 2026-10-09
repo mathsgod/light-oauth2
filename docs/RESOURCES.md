@@ -84,7 +84,7 @@ An API must validate its own audience, not accept every audience in the resource
 
 Disabled/deleted resources and removed client associations make existing tokens unusable, not just new requests. Removing a resource scope narrows the scopes of existing tokens immediately at validation. Refreshing with removed scopes fails; clients may request the remaining subset or reauthorize. Resource deletion does not physically erase credentials; recreating the same resource can restore still-valid tokens. Use credential revocation when permanent invalidation is required.
 
-MCP-to-API exchange retains its confidential-client source/target allowlist. Registry mode additionally requires enabled source and target resources, an exchanging client assigned to the target, and target-resource scopes. Direct API access works with exchange disabled.
+MCP-to-API exchange requires enabled source and target resources, a confidential client authenticated with its secret and assigned to both resources, and scope narrowing. No separate exchange policy is needed. See [token exchange](TOKEN_EXCHANGE.md). Direct API access remains available without an exchange request.
 
 ## Legacy credentials
 
