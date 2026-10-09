@@ -640,7 +640,7 @@ final class OAuthTest extends TestCase
         $this->provider->register($app, fn() => $user);
         self::assertTrue($container->has(\Light\OAuth2\Controller\OAuthClientController::class));
         if (method_exists($app, 'addPermissions')) {
-            self::assertSame(['oauth_client.list', 'oauth_client.add', 'oauth_client.update', 'oauth_client.delete'], (new \ReflectionProperty(\Light\App::class, 'extensionPermissions'))->getValue($app));
+            self::assertSame(['oauth_resource.list', 'oauth_resource.add', 'oauth_resource.update', 'oauth_resource.delete', 'oauth_client.list', 'oauth_client.add', 'oauth_client.update', 'oauth_client.delete'], (new \ReflectionProperty(\Light\App::class, 'extensionPermissions'))->getValue($app));
         }
         $request = (new ServerRequest())->withMethod('GET')->withUri(new \Laminas\Diactoros\Uri('https://auth.example.com/.well-known/oauth-authorization-server'));
         self::assertSame(200, $router->dispatch($request)->getStatusCode());

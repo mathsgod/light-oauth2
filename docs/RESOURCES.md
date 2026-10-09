@@ -2,15 +2,14 @@
 
 The authorization server can issue tokens directly for GraphQL APIs, MCP services or other registered services. Each grant selects one resource; token exchange is optional.
 
-## Enable database policy
+## Database resource policy
 
 1. Apply `migrations/001_oauth.sql` if this is a new installation, then `migrations/002_oauth_resources.sql` using the application's migration runner.
 2. Register the trusted resources and their scopes with `ResourceStore::createResource()`. See `examples/register-resources.php`. Resource scopes must be drawn from the provider's exposed permission scopes.
 3. Set each existing client's `resources` array in its `oauth_clients.record` JSON. A client without this field is restricted to the default `OAUTH_RESOURCE`; no client implicitly gains every registered resource. Preserve the rest of each client record, including its secret hash.
-4. Enable the registry in the application configuration:
+4. Configure the issuer and default/API resource identities:
 
 ```dotenv
-OAUTH_RESOURCE_REGISTRY_ENABLED=true
 OAUTH_ISSUER=https://isapi.hostlink.com.hk
 # Default audience for requests/legacy credentials that omit resource:
 OAUTH_RESOURCE=https://mcp.hostlink.com.hk/mcp
@@ -19,15 +18,15 @@ OAUTH_API_RESOURCE=https://isapi.hostlink.com.hk/
 OAUTH_SCOPES=client.list,quotation.list,invoice.list
 ```
 
-With registry mode enabled, only enabled database resources are accepted. Environment resource URLs do not bypass database policy. Additional services can be registered in the DB without changing `OAUTH_RESOURCES`. Resource identities are exact URLs: `https://isapi.hostlink.com.hk/` and `https://isapi.hostlink.com.hk` are different identifiers. Resource URLs are immutable; create a new record and update clients to move to a different identity.
+Only enabled database resources are accepted. Environment resource URLs do not bypass database policy. Additional services can be registered in the DB without changing environment settings. Resource identities are exact URLs: `https://isapi.hostlink.com.hk/` and `https://isapi.hostlink.com.hk` are different identifiers. Resource URLs are immutable; create a new record and update clients to move to a different identity.
 
-`oauth_resources` uses a SHA-256 primary key and keeps the exact URL (`id`), display name, scope list and enabled state in its JSON record. Client associations are a `resources` URL list in the existing client JSON, so no separate join table is needed. Custom stores enabling this mode must implement `Contract\ResourceStore`.
+`oauth_resources` uses a SHA-256 primary key and keeps the exact URL (`id`), display name, scope list and enabled state in its JSON record. Client associations are a `resources` URL list in the existing client JSON, so no separate join table is needed. Custom stores must implement `Contract\ResourceStore`.
 
-Registry mode defaults to false for existing installations, so upgrading the package alone does not require a new table or change existing policy. When disabled, the compatibility allowlist is `OAUTH_RESOURCE`, optional `OAUTH_API_RESOURCE`, and optional comma-separated `OAUTH_RESOURCES`.
+Resource management and database policy are always available when OAuth is enabled. Existing installations must apply migration 002 and register trusted resources before upgrading. Environment URLs identify audiences; they do not create resource records or bypass database policy.
 
 ## Management GraphQL
 
-Registry mode registers these operations (a frontend management page is outside this package):
+OAuth registers these operations (a frontend management page is outside this package):
 
 | Operation | Required permission |
 | --- | --- |
@@ -36,7 +35,7 @@ Registry mode registers these operations (a frontend management page is outside 
 | `updateOAuthResource(input: OAuthResourceInput!)` | `oauth_resource.update` |
 | `deleteOAuthResource(id: String!)` | `oauth_resource.delete` |
 
-The `oauthClientResourcePolicy` query (requiring `oauth_client.list`) returns `enabled`, `defaultResource` and the resource catalog for client resource selectors. It does not grant resource-management rights. The provider adds an `/OAuthResource` menu entry when registry mode is enabled; the frontend page is supplied by `nuxt-light`.
+The `oauthClientResourcePolicy` query (requiring `oauth_client.list`) returns `enabled`, `defaultResource` and the resource catalog for client resource selectors. It does not grant resource-management rights. The provider adds an `/OAuthResource` menu entry when OAuth is enabled; the frontend page is supplied by `nuxt-light`.
 
 All require login. Resource permissions are registered with Light but are not granted automatically. The resource input and output fields are `id`, `name`, `scopes`, `enabled`.
 

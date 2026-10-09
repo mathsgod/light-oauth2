@@ -55,6 +55,21 @@ final class ResourceRegistryTest extends TestCase
         $this->provider = new OAuthProvider($this->config, $this->store, $this->permissions, $flow, new TokenExchangePolicy(['exchange' => ['source' => self::MCP, 'targets' => [self::API => ['client.list']]]]));
         $this->verifier = str_repeat('v', 64);
     }
+    public function testRegistryIsAlwaysRequiredAndEmptyCatalogRejectsConfiguredAudience(): void
+    {
+        $empty = new MemoryStore();
+        $registry = new ResourceRegistry($this->config, $empty);
+        self::assertSame([], $registry->clientPolicy()->resources);
+        self::assertNull($registry->record(self::MCP));
+        $this->expectException(OAuthServerException::class);
+        $registry->assertResource(self::MCP);
+    }
+    public function testStoreMustSupportResourcePolicy(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('Resource registry requires a ResourceStore');
+        new ResourceRegistry($this->config, $this->createStub(\Light\OAuth2\Contract\Store::class));
+    }
     private function authorize(string $resource, ?string $scope = null): ResponseInterface
     {
         $params = ['resource' => $resource, 'response_type' => 'code', 'client_id' => 'client', 'redirect_uri' => 'http://127.0.0.1/callback', 'state' => 'test', 'code_challenge_method' => 'S256', 'code_challenge' => rtrim(strtr(base64_encode(hash('sha256', $this->verifier, true)), '+/', '-_'), '=')];

@@ -59,13 +59,13 @@ For service-to-service access on behalf of a user (including MCP to GraphQL), se
 Light GraphQL applications can set `OAUTH_API_RESOURCE` for the API token audience and `OAUTH_TOKEN_EXCHANGE_POLICY` for the exchange allowlist. `ProviderFactory::registerFromEnvironment($app)` installs the built-in token validation and scope-aware authentication; no application auth factory override is needed.
 
 1. `composer install`.
-2. Apply `migrations/001_oauth.sql` through the application's migration runner. For DB resource policy, also apply `migrations/002_oauth_resources.sql`, seed resources and assign clients before setting `OAUTH_RESOURCE_REGISTRY_ENABLED=true`; see [resource setup](docs/RESOURCES.md).
+2. Apply `migrations/001_oauth.sql` through the application's migration runner. Also apply `migrations/002_oauth_resources.sql`, register trusted resources and assign clients before enabling OAuth; see [resource setup](docs/RESOURCES.md).
 3. Create separate OAuth RSA keys outside the web root, and a random encryption key of at least 32 characters. Keep all keys out of source control. Use HTTPS outside loopback development.
 4. Configure the environment and use `ProviderFactory::registerFromEnvironment($app)` with the built-in login/consent flow, or construct `Config`, `PdoStore`, a permission provider and an `AuthorizationFlow` manually.
 5. Register database clients once; see `examples/register-client.php`. Store only `password_hash()` output for confidential-client secrets. Public clients can instead use opt-in [DCR](docs/DCR.md) for automatic registration, or [CIMD](docs/CIMD.md) without a database client record.
 6. Register the provider before running Light.
 
-Do not share the OAuth PDO connection with an already-open application transaction. The package does not apply migrations or provision database clients automatically.
+Do not share the OAuth PDO connection with an already-open application transaction. The package does not apply migrations or provision database clients/resources automatically. Resource policy is always enabled; custom stores must implement `Contract\ResourceStore`.
 
 ## Routes
 
@@ -102,9 +102,9 @@ OAUTH_AUTO_SELECT_SCOPES=true
 OAUTH_SCOPES=client.list,quotation.list
 ```
 
-`ProviderFactory` reads the setting automatically. For manual setup, pass `autoSelectScopes: true` to `Config`. The default is `false` for compatibility. `OAUTH_SCOPES` remains an allowlist; it does not grant permissions to users or clients.
+`ProviderFactory` reads the setting automatically. For manual setup, pass `autoSelectScopes: true` to `Config`. The default is `false` for compatibility. Scopes default to Light’s registered, concrete permissions (wildcards are excluded). Set `OAUTH_SCOPES` to optionally restrict that catalog; unregistered permissions are never exposed. Scopes do not grant permissions to users or clients.
 
-Only an authorization request **without a `scope` parameter** selects scopes automatically. Clients can omit `scope` from `/oauth/authorize`; they must still supply the usual client, redirect URI, state, and S256 PKCE parameters. After authentication, the server selects the intersection of the provider's scope allowlist (`OAUTH_SCOPES`), the resolved client's allowed scopes (including CIMD/DCR clients), and the user's current permissions. An empty intersection returns `invalid_scope`. Explicit scopes keep the existing strict validation; an explicitly empty `scope` does not enable automatic selection.
+Only an authorization request **without a `scope` parameter** selects scopes automatically. Clients can omit `scope` from `/oauth/authorize`; they must still supply the usual client, redirect URI, state, and S256 PKCE parameters. After authentication, the server selects the intersection of the provider's registered permission catalog (optionally restricted by `OAUTH_SCOPES`), the resolved client's allowed scopes (including CIMD/DCR clients), and the user's current permissions. An empty intersection returns `invalid_scope`. Explicit scopes keep the existing strict validation; an explicitly empty `scope` does not enable automatic selection.
 
 The built-in browser flow displays eligible scopes as checked checkboxes. Users may grant any nonempty subset. The offered scope list is bound to the pending browser session; if eligibility changes before approval, the flow requires a new consent page. Malformed selections and scopes outside the offered list are rejected. Authorization codes, access tokens, and refresh tokens retain only the approved subset. Token issuance, refresh, and exchange still perform their normal permission checks.
 
@@ -142,7 +142,7 @@ $app->run();
 
 The factory is enabled by `OAUTH_ENABLED=true`. It reads `OAUTH_ISSUER`,
 `OAUTH_RESOURCE`, `OAUTH_PRIVATE_KEY_PATH`, `OAUTH_PUBLIC_KEY_PATH`,
-`OAUTH_ENCRYPTION_KEY` and comma-separated `OAUTH_SCOPES`, and uses the Light
+`OAUTH_ENCRYPTION_KEY` and optional comma-separated `OAUTH_SCOPES`, and uses the Light
 `DATABASE_*` settings with a dedicated PDO connection. Optional settings are
 `OAUTH_CIMD_ENABLED`, `OAUTH_DCR_ENABLED`, `OAUTH_API_RESOURCE`, `OAUTH_TOKEN_EXCHANGE_POLICY` and
 `OAUTH_TOKEN_EXCHANGE_TTL`; see [.env.example](.env.example). The default browser flow

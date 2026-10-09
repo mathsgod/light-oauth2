@@ -18,6 +18,9 @@ final class DynamicClientRegistrationTest extends TestCase
     protected function setUp(): void
     {
         $this->store = new MemoryStore();
+        foreach (['https://mcp.example/mcp'] as $resource) {
+            $this->store->createResource(['id' => $resource, 'name' => $resource, 'scopes' => ['client.list', 'invoice.list'], 'enabled' => true]);
+        }
         $this->permissions = new class implements PermissionProvider {
             public function scopes(): array { return ['client.list', 'invoice.list']; }
             public function can(string $userId, string $permission): bool { return $userId === '27' && $permission === 'client.list'; }

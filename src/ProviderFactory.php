@@ -33,7 +33,9 @@ final class ProviderFactory
             authorizationUiUrl: self::optional('OAUTH_AUTHORIZATION_UI_URL'),
         );
         $exchangePolicy ??= TokenExchangePolicy::fromEnvironment($_ENV);
-        $scopes = array_values(array_unique(array_filter(array_map('trim', explode(',', $_ENV['OAUTH_SCOPES'] ?? 'user.list')))));
+        $configuredScopes = self::optional('OAUTH_SCOPES');
+        $scopes = $configuredScopes === null ? null : array_values(array_unique(array_filter(array_map('trim', explode(',', $configuredScopes)))));
+        $app->addPermissions(['oauth_resource.list', 'oauth_resource.add', 'oauth_resource.update', 'oauth_resource.delete', 'oauth_client.list', 'oauth_client.add', 'oauth_client.update', 'oauth_client.delete']);
         $provider = new OAuthProvider(
             $config,
             new PdoStore(self::connection()),

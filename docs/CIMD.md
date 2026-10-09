@@ -93,4 +93,4 @@ advertise `authorization_response_iss_parameter_supported` as part of CIMD suppo
 
 ## Resource registry
 
-With `OAUTH_RESOURCE_REGISTRY_ENABLED=true`, the custom `resources` metadata list selects administrator-registered, enabled resources. Omission grants only the default resource; metadata never creates new resource records. See [resource policy and registration examples](RESOURCES.md).
+The custom `resources` metadata list selects administrator-registered, enabled resources. Omission grants only the default resource; metadata never creates new resource records. See [resource policy and registration examples](RESOURCES.md).
